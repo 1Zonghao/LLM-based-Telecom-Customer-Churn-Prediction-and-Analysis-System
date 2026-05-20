@@ -1,0 +1,286 @@
+/* =============================================================
+   Autonomous Data Science Agent — Custom Stylesheet (Premium Upgraded)
+   ============================================================= */
+
+/* ----- CSS Variables ----- */
+:root {
+  --sidebar-width: 280px;
+  --primary: #0f172a; /* 切换为更具学术克制感的深墨黑 */
+  --primary-hover: #1e293b;
+  --primary-light: #eff6ff;
+  --bg-main: #f1f5f9; /* 稍微加深大背景，让纯白卡片立体浮起 */
+  --bg-sidebar: #1e293b;
+  --bg-sidebar-hover: #334155;
+  --bg-sidebar-active: #020617;
+  --text-sidebar: #e2e8f0;
+  --text-sidebar-muted: #94a3b8;
+  --bubble-user: #dbeafe;
+  --bubble-user-text: #1e3a5f;
+  --bubble-assistant: #ffffff;
+  --bubble-assistant-border: #e2e8f0;
+  --bubble-system: #f1f5f9;
+  --bubble-system-border: #cbd5e1;
+  --error-bg: #fef2f2;
+  --error-border: #fecaca;
+  --success-bg: #f0fdf4;
+  --success-border: #bbf7d0;
+  --warning-bg: #fffbeb;
+  --warning-border: #fde68a;
+  --checkpoint-bg: #eff6ff;
+  --checkpoint-border: #93c5fd;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.05), 0 2px 4px -2px rgba(15, 23, 42, 0.05);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.07), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.25s ease;
+}
+
+/* ----- Global ----- */
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-main);
+}
+
+.gradio-container {
+  max-width: none !important;
+}
+
+/* ----- Main Layout Row ----- */
+#main-row {
+  height: calc(100vh - 80px);
+  overflow: hidden;
+  gap: 20px !important; /* 给予两侧更舒适的呼吸间距 */
+}
+
+/* =============================================================
+   SIDEBAR
+   ============================================================= */
+
+#sidebar-column {
+  background: var(--bg-sidebar) !important;
+  padding: 16px !important;
+  overflow-y: auto;
+  border-right: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+/* Sidebar header */
+.sidebar-header {
+  padding: 4px 4px 12px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sidebar-header h3 {
+  color: var(--text-sidebar);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  margin: 0 0 4px 0;
+}
+
+/* New-chat button */
+#new-chat-btn {
+  margin: 12px 0 8px 0 !important;
+  width: 100% !important;
+  border-radius: var(--radius-sm) !important;
+  font-weight: 500 !important;
+  font-size: 14px !important;
+  background: #2563eb !important; /* 激活按钮亮色突出 */
+  border: none !important;
+  color: white !important;
+  transition: background var(--transition-fast);
+  padding: 10px 0 !important;
+}
+#new-chat-btn:hover {
+  background: #1d4ed8 !important;
+}
+
+/* Session list — override Gradio Dataframe styling */
+#session-list {
+  margin: 4px 0 !important;
+  flex: 1 !important;
+  overflow-y: auto !important;
+  border: none !important;
+  background: transparent !important;
+}
+
+#session-list .table-wrap {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+#session-list table {
+  background: transparent !important;
+  border: none !important;
+  width: 100% !important;
+}
+
+#session-list thead {
+  display: none;
+}
+
+/* Hide the session-id column (first column) */
+#session-list td:first-child,
+#session-list th:first-child {
+  display: none;
+}
+
+/* 强行抹除 Dataframe 原生悬浮工具按钮（复制、全屏等） */
+#session-list button { display: none !important; }
+#session-list .icon-container { display: none !important; }
+
+#session-list tbody tr {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04) !important;
+  cursor: pointer !important;
+  transition: background var(--transition-fast);
+}
+
+#session-list tbody tr:hover td {
+  background: var(--bg-sidebar-hover) !important;
+  border-radius: 6px;
+}
+
+#session-list td {
+  color: var(--text-sidebar) !important;
+  padding: 10px 12px !important;
+  font-size: 13px !important;
+  border: none !important;
+  line-height: 1.4 !important;
+  background: transparent !important;
+}
+
+#session-list td:last-child {
+  color: var(--text-sidebar-muted) !important;
+  font-size: 11px !important;
+  text-align: right;
+  width: 70px;
+}
+
+/* Delete button in sidebar */
+#delete-session-btn {
+  margin: 8px 0 16px 0 !important;
+  width: 100% !important;
+  background: transparent !important;
+  color: var(--text-sidebar-muted) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: var(--radius-sm) !important;
+  font-size: 13px !important;
+  padding: 6px 0 !important;
+  transition: all var(--transition-fast);
+}
+#delete-session-btn:hover {
+  color: #fca5a5 !important;
+  border-color: rgba(252, 165, 165, 0.3) !important;
+  background: rgba(239, 68, 68, 0.1) !important;
+}
+
+/* =============================================================
+   MAIN PANEL & ENHANCEMENTS
+   ============================================================= */
+
+#main-column {
+  background: var(--bg-main);
+  overflow-y: auto;
+  padding: 0px 4px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 16px !important;
+}
+
+/* ----- Chatbot Base ----- */
+#main-chatbot {
+  border-radius: var(--radius-md) !important;
+  box-shadow: var(--shadow-sm);
+  background: #ffffff !important;
+  border: 1px solid var(--bubble-assistant-border) !important;
+}
+
+/* 【新增强调】当 Chatbot 管道空置未激活时的冷启动占位符 */
+#main-chatbot .message-wrap:empty::before {
+    content: "⚡ WAIT_FOR_PIPELINE_ACTIVATION... \n[ 等待数据集输入与拓扑管道激活 ]";
+    display: block;
+    text-align: center;
+    padding-top: 150px;
+    color: #94a3b8;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-line;
+}
+
+/* User & Bot Bubbles */
+#main-chatbot .message-wrap.user .message-content {
+  background: var(--bubble-user) !important;
+  color: var(--bubble-user-text) !important;
+  border-radius: var(--radius-lg) var(--radius-lg) 4px var(--radius-lg) !important;
+}
+#main-chatbot .message-wrap.bot .message-content {
+  background: var(--bubble-assistant) !important;
+  border: 1px solid var(--bubble-assistant-border) !important;
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) 4px !important;
+  box-shadow: var(--shadow-sm);
+}
+
+/* ----- 全局高精卡片实体化重构 ----- */
+#input-group, #checkpoint-panel {
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: var(--radius-md) !important;
+  padding: 20px !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+/* 断点面板视觉增强 */
+#checkpoint-panel { border-left: 4px solid #f59e0b !important; }
+#checkpoint-panel h3 { color: #b45309 !important; font-size: 15px; font-weight: 600; }
+
+/* ----- 自定义动态 HTML 状态看板 ----- */
+.status-html-card { padding: 10px 14px; border-radius: 6px; font-size: 13px; font-family: var(--font-mono); font-weight: 500; border: 1px solid transparent; }
+.status-ready { background-color: #f1f5f9; color: #475569; border-color: #e2e8f0; }
+.status-running { background-color: #f0fdf4; color: #166534; border-color: #bbf7d0; }
+.status-paused { background-color: #fffbeb; color: #92400e; border-color: #fef3c7; }
+.status-success { background-color: #e0e7ff; color: #3730a3; border-color: #c7d2fe; }
+.status-error { background-color: #fee2e2; color: #991b1b; border-color: #fecaca; }
+.status-loaded { background-color: #f8fafc; color: #0f172a; border-color: #e2e8f0; }
+.status-deleted { background-color: #fafafa; color: #737373; border-color: #e5e5e5; }
+
+/* ----- 精致的流式数据演进仪表盘 ----- */
+.crypto-progress-card { background: #ffffff; padding: 18px; border-radius: var(--radius-md); border: 1px solid #e2e8f0; box-shadow: var(--shadow-md); }
+.progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.progress-title { font-size: 10px; color: #64748b; font-weight: 600; letter-spacing: 0.08em; }
+.progress-subtitle { font-size: 11px; color: #475569; font-weight: 500; }
+.progress-label-main { font-size: 16px; color: #0f172a; font-weight: 600; margin-bottom: 10px; }
+.progress-bar-container { background: #f1f5f9; border-radius: 10px; height: 5px; overflow: hidden; }
+.progress-bar-fill { background: #0f172a; height: 100%; border-radius: 10px; transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+.metrics-divider { margin: 14px 0 10px 0; border-top: 1px dashed #e2e8f0; }
+.metrics-grid-title { font-size: 10px; color: #64748b; font-weight: 600; letter-spacing: 0.08em; margin-bottom: 8px; }
+.metrics-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.metric-item { background: #f8fafc; padding: 6px 10px; border-radius: 4px; border: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; }
+.metric-label { font-size: 11px; color: #64748b; }
+.metric-value { font-size: 12px; font-family: var(--font-mono); font-weight: 600; color: #0f172a; }
+
+/* ----- 其它既有核心清理 ----- */
+#main-chatbot code { font-family: var(--font-mono); font-size: 0.9em; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; color: #334155; }
+#main-chatbot pre { background: #1e293b !important; color: #e2e8f0 !important; border-radius: var(--radius-sm) !important; padding: 14px 16px !important; overflow-x: auto; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; margin: 10px 0; }
+#main-chatbot pre code { background: transparent !important; color: inherit !important; padding: 0; }
+.msg-type-badge { display: none !important; }
+
+/* ----- SCROLLBARS & RESPONSIVE ----- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+@media (max-width: 768px) {
+  #sidebar-column { display: none !important; }
+  #main-column { padding: 8px !important; }
+  #main-chatbot .message-wrap .message-content { max-width: 95% !important; }
+}

@@ -11,7 +11,11 @@ venv/
 
 # 运行时输出
 data/images/*.png
+data/sessions/
 outputs/
+preprocessor.pkl
+processed_data.npz
+paper_rewriting_output/
 
 # IDE
 .idea/
