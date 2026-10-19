@@ -38,8 +38,8 @@ class LLMClient:
     def is_configured(self) -> bool:
         return bool(self.api_key)
 
-    def chat(self, messages: list[dict], temperature: float = 0.1) -> str:
-        """发送聊天请求，返回 LLM 响应文本。"""
+    def chat(self, messages: list[dict], temperature: float = 0.1) -> tuple[str, dict]:
+        """发送聊天请求，返回 (LLM 响应文本, token_usage 字典)。"""
         if not self.is_configured:
             raise RuntimeError(
                 "LLM_API_KEY not set. Set the environment variable or pass api_key parameter."
@@ -65,7 +65,14 @@ class LLMClient:
                 )
                 with urllib.request.urlopen(req, timeout=120) as resp:
                     body = json.loads(resp.read().decode("utf-8"))
-                    return body["choices"][0]["message"]["content"]
+                    content = body["choices"][0]["message"]["content"]
+                    usage_raw = body.get("usage", {})
+                    usage = {
+                        "prompt_tokens": usage_raw.get("prompt_tokens", 0),
+                        "completion_tokens": usage_raw.get("completion_tokens", 0),
+                        "total_tokens": usage_raw.get("total_tokens", 0),
+                    }
+                    return content, usage
 
             except urllib.error.HTTPError as e:
                 last_error = e
@@ -91,10 +98,10 @@ class MockLLMClient(LLMClient):
     def is_configured(self) -> bool:
         return True
 
-    def chat(self, messages: list[dict], temperature: float = 0.1) -> str:
+    def chat(self, messages: list[dict], temperature: float = 0.1) -> tuple[str, dict]:
         if self.call_count < len(self.responses):
             response = self.responses[self.call_count]
             self.call_count += 1
-            return response
+            return response, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         # Default: return a finish response
-        return "数据分析完成。"
+        return "数据分析完成。", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}

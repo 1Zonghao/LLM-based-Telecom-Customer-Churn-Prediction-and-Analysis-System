@@ -5,7 +5,8 @@ v2 — 会话持久化、侧边栏历史、消息层次化渲染。
 import json
 import os
 import sys
-from datetime import datetime
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -69,7 +70,7 @@ def _format_chatbot(messages: list[dict]) -> list[dict]:
     return format_chatbot(messages)
 
 
-def _format_progress(values: dict) -> str:
+def _format_progress(values: dict, step_times: list | None = None) -> str:
     """全面升级为美观的高级 HTML 数据卡片与动态状态进度条"""
     phase = values.get("phase", "等待开始")
     iteration = values.get("iteration", 0)
@@ -122,8 +123,76 @@ def _format_progress(values: dict) -> str:
             """
         html += "</div>"
 
+    # ── Token / Timing 资源面板 ──
+    token_usage = values.get("token_usage", {})
+    started_at = values.get("started_at", "")
+    elapsed_str = ""
+    if started_at:
+        try:
+            start_dt = datetime.fromisoformat(started_at)
+            elapsed = (datetime.now(timezone.utc) - start_dt).total_seconds()
+            elapsed_str = _format_duration(elapsed)
+        except Exception:
+            pass
+
+    show_resource = token_usage or elapsed_str or step_times
+    if show_resource:
+        html += '<div class="metrics-divider"></div>'
+        html += '<div class="metrics-grid-title">RESOURCE TRACE</div>'
+        html += '<div class="resource-grid">'
+
+        if token_usage:
+            pt = _format_token_count(token_usage.get("prompt_tokens", 0))
+            ct = _format_token_count(token_usage.get("completion_tokens", 0))
+            tt = _format_token_count(token_usage.get("total_tokens", 0))
+            html += f"""
+            <div class="resource-item">
+                <span class="resource-label">TOKEN</span>
+                <span class="resource-value">P:{pt} C:{ct} Σ:{tt}</span>
+            </div>"""
+
+        if elapsed_str:
+            html += f"""
+            <div class="resource-item">
+                <span class="resource-label">ELAPSED</span>
+                <span class="resource-value">{elapsed_str}</span>
+            </div>"""
+
+        html += "</div>"
+
+        if step_times:
+            html += '<div class="step-trace"><span class="step-label">TRACE</span><div class="step-chips">'
+            node_labels = {
+                "reasoning": "R",
+                "action": "A",
+                "checkpoint_fe": "FE",
+                "checkpoint_model": "M",
+            }
+            for st in step_times[-10:]:
+                node = st.get("node", "?")
+                dur = st.get("duration", 0)
+                label = node_labels.get(node, node[:2])
+                html += f'<span class="step-chip step-{node}">{label} {dur:.1f}s</span>'
+            html += "</div></div>"
+
     html += "</div>"
     return html
+
+
+def _format_duration(seconds: float) -> str:
+    """将秒数格式化为 HH:MM:SS 或 MM:SS 字符串。"""
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"
+
+
+def _format_token_count(n: int) -> str:
+    """格式化 token 数量，过千时用 k 表示。"""
+    if n >= 1000:
+        return f"{n / 1000:.1f}k"
+    return str(n)
 
 
 def _export_code_history(code_history: list[str], task: str = "") -> tuple[str, str]:
@@ -372,11 +441,20 @@ def run_agent_stream(
         _refresh_session_list(),    # 7
     )
 
+    step_times: list[dict] = []
+    last_event_time = time.time()
+
     try:
         for event in session.app.stream(session.state, session.config, stream_mode="updates"):
             for node_name, node_output in event.items():
                 if node_name == "__interrupt__":
                     continue
+
+                now = time.time()
+                step_duration = now - last_event_time
+                step_times.append({"node": node_name, "duration": round(step_duration, 2)})
+                last_event_time = now
+
                 for key, value in node_output.items():
                     if key in ("messages", "code_history"):
                         latest_values.setdefault(key, [])
@@ -389,11 +467,10 @@ def run_agent_stream(
 
                 msgs = node_output.get("messages", [])
                 if msgs:
-                    # 【已修复问题 4】改用全量历史 messages 渲染，彻底消除消息覆盖 Bug
                     chatbot = _format_chatbot(latest_values["messages"])
                     status = f"<div class='status-html-card status-running'>🚀 活跃计算拓扑节点: <code>{node_name}</code></div>"
 
-                progress_md = _format_progress(latest_values)
+                progress_md = _format_progress(latest_values, step_times)
                 yield (
                     chatbot,
                     status,
@@ -406,7 +483,7 @@ def run_agent_stream(
                 )
     except Exception as e:
         status = f"<div class='status-html-card status-error'>❌ 容器内核崩溃故障: {str(e)}</div>"
-        progress_md = _format_progress(latest_values)
+        progress_md = _format_progress(latest_values, step_times)
         yield (
             chatbot,
             status,
@@ -429,7 +506,7 @@ def run_agent_stream(
         _save_session_from_state(session_state, chatbot, latest_values)
 
         status = f"<div class='status-html-card status-paused'>🚧 触发人工确认关卡: <code>{checkpoint_type}</code></div>"
-        progress_md = _format_progress(latest_values)
+        progress_md = _format_progress(latest_values, step_times)
         yield (
             chatbot,
             status,
@@ -459,7 +536,7 @@ def run_agent_stream(
     _save_session_from_state(session_state, chatbot, values)
 
     status = "<div class='status-html-card status-success'>✅ 完整数据推演流程审计圆满结束</div>"
-    progress_md = _format_progress(latest_values)
+    progress_md = _format_progress(latest_values, step_times)
 
     yield (
         chatbot,
@@ -500,8 +577,22 @@ def resume_agent_stream(session_state: dict, feedback: str = ""):
     latest_values = dict(session.state) if session.state else {}
     latest_values.setdefault("messages", [])
     latest_values.setdefault("code_history", [])
+
+    # 从 checkpointer 恢复 started_at / token_usage，否则 resume 后这些值会丢失
+    try:
+        cp_snap = session.app.get_state(session.config)
+        if cp_snap:
+            cp_vals = cp_snap.values if hasattr(cp_snap, "values") else cp_snap
+            for k in ("started_at", "token_usage"):
+                if cp_vals.get(k):
+                    latest_values[k] = cp_vals[k]
+    except Exception:
+        pass
+
     chatbot: list[dict] = _format_chatbot(latest_values["messages"])
-    progress_md = _format_progress(latest_values)
+    step_times: list[dict] = []
+    last_event_time = time.time()
+    progress_md = _format_progress(latest_values, step_times)
 
     yield (
         chatbot,
@@ -520,6 +611,12 @@ def resume_agent_stream(session_state: dict, feedback: str = ""):
                 for node_name, node_output in event.items():
                     if node_name == "__interrupt__":
                         continue
+
+                    now = time.time()
+                    step_duration = now - last_event_time
+                    step_times.append({"node": node_name, "duration": round(step_duration, 2)})
+                    last_event_time = now
+
                     for key, value in node_output.items():
                         if key in ("messages", "code_history"):
                             latest_values.setdefault(key, [])
@@ -532,11 +629,10 @@ def resume_agent_stream(session_state: dict, feedback: str = ""):
 
                     msgs = node_output.get("messages", [])
                     if msgs:
-                        # 【已修复问题 4】恢复流阶段同样切换到全量历史渲染
                         chatbot = _format_chatbot(latest_values["messages"])
                         status = f"<div class='status-html-card status-running'>🚀 活跃计算拓扑节点: <code>{node_name}</code></div>"
 
-                    progress_md = _format_progress(latest_values)
+                    progress_md = _format_progress(latest_values, step_times)
                     yield (
                         chatbot,
                         status,
@@ -549,7 +645,7 @@ def resume_agent_stream(session_state: dict, feedback: str = ""):
                     )
         except Exception as e:
             status = f"<div class='status-html-card status-error'>❌ 恢复推演时内核崩溃: {str(e)}</div>"
-            progress_md = _format_progress(latest_values)
+            progress_md = _format_progress(latest_values, step_times)
             yield (
                 chatbot,
                 status,
@@ -567,7 +663,7 @@ def resume_agent_stream(session_state: dict, feedback: str = ""):
             if session.auto_confirm:
                 session.interrupt_info = interrupt_info
                 status = f"<div class='status-html-card status-running'>⚡ 联动机制流转中 — 自动核准: <code>{interrupt_info.get('type', 'checkpoint')}</code></div>"
-                progress_md = _format_progress(latest_values)
+                progress_md = _format_progress(latest_values, step_times)
                 yield (
                     chatbot,
                     status,
@@ -587,7 +683,7 @@ def resume_agent_stream(session_state: dict, feedback: str = ""):
                 _save_session_from_state(session_state, chatbot, latest_values)
 
                 status = f"<div class='status-html-card status-paused'>🚧 持续挂起中 — 等待确认 <code>{checkpoint_type}</code> 方案</div>"
-                progress_md = _format_progress(latest_values)
+                progress_md = _format_progress(latest_values, step_times)
                 yield (
                     chatbot,
                     status,
@@ -618,7 +714,7 @@ def resume_agent_stream(session_state: dict, feedback: str = ""):
     _save_session_from_state(session_state, chatbot, values)
 
     status = "<div class='status-html-card status-success'>✅ 完整数据推演流程审计圆满结束</div>"
-    progress_md = _format_progress(latest_values)
+    progress_md = _format_progress(latest_values, step_times)
 
     yield (
         chatbot,
@@ -671,6 +767,18 @@ body, .gradio-container { background-color: #f8fafc !important; font-family: 'In
 .metric-item { background: #f8fafc; padding: 6px 10px; border-radius: 4px; border: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; }
 .metric-label { font-size: 11px; color: #64748b; }
 .metric-value { font-size: 12px; font-family: monospace; font-weight: 600; color: #0f172a; }
+.resource-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 8px; }
+.resource-item { background: #f0fdf4; padding: 6px 10px; border-radius: 4px; border: 1px solid #bbf7d0; display: flex; justify-content: space-between; align-items: center; }
+.resource-label { font-size: 10px; color: #166534; font-weight: 600; letter-spacing: 0.06em; }
+.resource-value { font-size: 11px; font-family: monospace; font-weight: 600; color: #14532d; }
+.step-trace { display: flex; align-items: flex-start; gap: 8px; margin-top: 4px; }
+.step-label { font-size: 10px; color: #64748b; font-weight: 600; letter-spacing: 0.06em; white-space: nowrap; padding-top: 2px; }
+.step-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.step-chip { font-size: 10px; font-family: monospace; padding: 2px 6px; border-radius: 3px; font-weight: 500; white-space: nowrap; }
+.step-chip.step-reasoning { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+.step-chip.step-action { background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; }
+.step-chip.step-checkpoint_fe { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
+.step-chip.step-checkpoint_model { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
 """
 
 def create_ui() -> gr.Blocks:

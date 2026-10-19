@@ -12,10 +12,15 @@ venv/
 # 运行时输出
 data/images/*.png
 data/sessions/
+src/data/images/
 outputs/
 preprocessor.pkl
 processed_data.npz
 paper_rewriting_output/
+
+# 本地数据集与基准缓存（可从上游重新下载，不入库）
+data/benchmarks/
+data/uci_datasets/
 
 # IDE
 .idea/

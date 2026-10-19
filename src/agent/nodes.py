@@ -1,4 +1,5 @@
 import re
+from datetime import datetime, timezone
 from typing import Callable
 
 from .state import AgentState
@@ -18,7 +19,15 @@ def make_reasoning_node(llm: LLMClient) -> Callable:
 
     def reasoning_node(state: AgentState) -> dict:
         messages = _build_messages(state)
-        response = llm.chat(messages)
+        response, usage = llm.chat(messages)
+
+        # 累加 token 消耗
+        prev_usage = state.get("token_usage", {})
+        new_usage = {
+            "prompt_tokens": prev_usage.get("prompt_tokens", 0) + usage.get("prompt_tokens", 0),
+            "completion_tokens": prev_usage.get("completion_tokens", 0) + usage.get("completion_tokens", 0),
+            "total_tokens": prev_usage.get("total_tokens", 0) + usage.get("total_tokens", 0),
+        }
 
         # CHECKPOINT 标记优先于代码块：LLM 可能在提案中附带示例代码
         is_fe_checkpoint = CHECKPOINT_FE_RE.search(response)
@@ -27,7 +36,12 @@ def make_reasoning_node(llm: LLMClient) -> Callable:
 
         updates: dict = {
             "messages": [{"role": "assistant", "content": response}],
+            "token_usage": new_usage,
         }
+
+        # 首次调用时记录开始时间
+        if not state.get("started_at"):
+            updates["started_at"] = datetime.now(timezone.utc).isoformat()
 
         if is_fe_checkpoint:
             proposal = _extract_proposal(response)
