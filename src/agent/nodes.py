@@ -4,7 +4,18 @@ from typing import Callable
 
 from .state import AgentState
 from .llm_client import LLMClient
-from .prompts import SYSTEM_PROMPT, TASK_PROMPT, CONTINUE_PROMPT, ERROR_CONTINUE_PROMPT
+from .prompts import (
+    build_system_prompt,
+    TASK_PROMPT,
+    CONTINUE_PROMPT,
+    ERROR_CONTINUE_PROMPT,
+    VERIFICATION_CONTINUE_PROMPT,
+)
+from .verifier import (
+    format_verification_feedback,
+    format_verification_report,
+    verify_artifacts,
+)
 from sandbox.kernel_manager import KernelManager
 from sandbox.compressor import OutputCompressor
 
@@ -18,6 +29,20 @@ def make_reasoning_node(llm: LLMClient) -> Callable:
     """创建 reasoning_node：调用 LLM 推理并决定下一步动作（含断点检测）。"""
 
     def reasoning_node(state: AgentState) -> dict:
+        # 安全阀：达到迭代上限后不再调用 LLM，直接进入交付验证。
+        # 每次验证重试额外给 2 次动作预算，避免“修复代码还没跑就被截断”。
+        max_iterations = MAX_ITERATIONS + state.get("verification_retries", 0) * 2
+        if state.get("iteration", 0) >= max_iterations:
+            return {
+                "messages": [{
+                    "role": "assistant",
+                    "content": "[达到最大迭代次数，进入交付验证]",
+                }],
+                "final_report": state.get("final_report", "") or "[达到最大迭代次数，自动终止]",
+                "next_action": "finish",
+                "phase": "reporting",
+            }
+
         messages = _build_messages(state)
         response, usage = llm.chat(messages)
 
@@ -104,10 +129,6 @@ def make_action_node(km: KernelManager, compressor: OutputCompressor) -> Callabl
             "consecutive_errors": consecutive_errors,
         }
 
-        if state["iteration"] + 1 >= MAX_ITERATIONS:
-            updates["next_action"] = "finish"
-            updates["final_report"] = updates.get("final_report", "[达到最大迭代次数，自动终止]")
-
         return updates
 
     return action_node
@@ -163,6 +184,67 @@ def make_checkpoint_model_node() -> Callable:
     return checkpoint_model_node
 
 
+def make_verifier_node() -> Callable:
+    """交付验证节点：检查契约，决定通过、修复还是终止。"""
+
+    def verifier_node(state: AgentState) -> dict:
+        contract = state.get("artifact_contract") or {}
+        result = verify_artifacts(contract, state)
+
+        if result["passed"]:
+            updates: dict = {
+                "verification_result": result,
+                "verification_passed": True,
+                "next_action": "finish",
+                "phase": "completed",
+                "messages": [{
+                    "role": "system",
+                    "content": "[验证通过] 交付物检查全部通过。",
+                }],
+            }
+            if not state.get("final_report"):
+                lines = ["### 交付验证通过", ""]
+                for check in result.get("checks", []):
+                    lines.append(f"- PASS `{check['name']}` — {check.get('detail', '')}")
+                updates["final_report"] = "\n".join(lines)
+            return updates
+
+        retries = int(state.get("verification_retries", 0))
+        max_retries = int(state.get("max_verification_retries", 2))
+
+        if retries >= max_retries:
+            return {
+                "verification_result": result,
+                "verification_passed": False,
+                "next_action": "finish",
+                "phase": "verification_failed",
+                "final_report": format_verification_report(result),
+                "messages": [{
+                    "role": "system",
+                    "content": "[验证失败] 已达到最大重试次数，流程终止。",
+                }],
+            }
+
+        return {
+            "verification_result": result,
+            "verification_passed": False,
+            "verification_retries": retries + 1,
+            "next_action": "repair",
+            "phase": "verification_repair",
+            "messages": [{
+                "role": "user",
+                "content": format_verification_feedback(result),
+            }],
+        }
+
+    return verifier_node
+
+
+def verifier_router(state: AgentState) -> str:
+    """验证节点路由：需要修复则回到 reasoning，否则结束。"""
+    return "repair" if state.get("next_action") == "repair" else "finish"
+
+
 def router(state: AgentState) -> str:
     """条件路由：根据 next_action 决定分支。"""
     action = state.get("next_action", "finish")
@@ -177,7 +259,10 @@ def _build_messages(state: AgentState) -> list[dict]:
     profile = state.get("data_profile", {})
     profile_str = _format_profile(profile)
 
-    system_prompt = SYSTEM_PROMPT.format(state_context=profile_str)
+    system_prompt = build_system_prompt(
+        state.get("domain", "generic"),
+        profile_str,
+    )
 
     msgs: list[dict] = [{"role": "system", "content": system_prompt}]
 
@@ -188,18 +273,25 @@ def _build_messages(state: AgentState) -> list[dict]:
                 task=state["task"],
                 data_path=state["data_path"],
                 phase=state.get("phase", "eda"),
+                artifact_contract=_format_contract(state.get("artifact_contract")),
             ),
         })
     else:
         for m in state["messages"]:
             msgs.append(m)
 
-        # 检测最后一条消息是否为错误
+        # 检测最后一条消息是执行错误还是交付验证失败
         last_msg = state["messages"][-1] if state["messages"] else {}
         last_content = last_msg.get("content", "")
         is_error = "[执行错误]" in last_content
+        is_verification_failure = "[验证失败]" in last_content
 
-        if is_error:
+        if is_verification_failure:
+            msgs.append({
+                "role": "user",
+                "content": VERIFICATION_CONTINUE_PROMPT.format(observation=last_content),
+            })
+        elif is_error:
             # 提取错误信息和代码
             error_text = last_content
             last_code = state.get("code_history", [])[-1] if state.get("code_history") else ""
@@ -223,6 +315,31 @@ def _build_messages(state: AgentState) -> list[dict]:
             })
 
     return msgs
+
+
+def _format_contract(contract: dict | None) -> str:
+    """把交付物契约格式化成 LLM 可读文本。"""
+    if not contract or not contract.get("required_files"):
+        return "无（按任务描述执行）"
+
+    lines: list[str] = []
+    for spec in contract.get("required_files", []):
+        path = spec.get("path", "")
+        fmt = spec.get("format", "")
+        details = []
+        if spec.get("columns"):
+            details.append(f"列={spec['columns']}")
+        if spec.get("expected_rows") is not None:
+            details.append(f"行数={spec['expected_rows']}")
+        suffix = f"（{', '.join(details)}）" if details else ""
+        lines.append(f"- {path} [{fmt}]{suffix}")
+    if contract.get("labels_path"):
+        lines.append(f"- 标签文件：{contract['labels_path']}")
+    if contract.get("metric"):
+        lines.append(f"- 评估指标：{contract['metric']}")
+    if contract.get("group_column"):
+        lines.append(f"- 分组列：{contract['group_column']}（必须使用分组交叉验证）")
+    return "\n".join(lines)
 
 
 def _extract_proposal(response: str) -> str:

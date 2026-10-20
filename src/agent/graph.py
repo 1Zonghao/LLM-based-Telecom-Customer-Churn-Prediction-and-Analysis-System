@@ -10,7 +10,9 @@ from .nodes import (
     make_action_node,
     make_checkpoint_fe_node,
     make_checkpoint_model_node,
+    make_verifier_node,
     router,
+    verifier_router,
 )
 from sandbox.kernel_manager import KernelManager
 from sandbox.compressor import OutputCompressor
@@ -38,19 +40,28 @@ def build_agent(
     action = make_action_node(km, compressor)
     checkpoint_fe = make_checkpoint_fe_node()
     checkpoint_model = make_checkpoint_model_node()
+    verifier = make_verifier_node()
 
     graph = StateGraph(AgentState)
     graph.add_node("reasoning", reasoning)
     graph.add_node("action", action)
     graph.add_node("checkpoint_fe", checkpoint_fe)
     graph.add_node("checkpoint_model", checkpoint_model)
+    graph.add_node("verifier", verifier)
 
     graph.set_entry_point("reasoning")
 
+    # 智能体声称完成时，先进入交付验证，而不是直接结束
     graph.add_conditional_edges("reasoning", router, {
         "execute": "action",
         "checkpoint_fe": "checkpoint_fe",
         "checkpoint_model": "checkpoint_model",
+        "finish": "verifier",
+    })
+
+    # 验证器：通过则结束，失败则回到推理修复
+    graph.add_conditional_edges("verifier", verifier_router, {
+        "repair": "reasoning",
         "finish": END,
     })
 
@@ -79,10 +90,17 @@ def run_agent(
     km: KernelManager,
     compressor: OutputCompressor | None = None,
     thread_config: dict | None = None,
+    domain: str = "generic",
+    artifact_contract: dict | None = None,
 ):
     """运行智能体并返回最终状态（同步，无中断处理）。"""
     app = build_agent(llm, km, compressor)
-    state = init_state(task, data_path)
+    state = init_state(
+        task,
+        data_path,
+        domain=domain,
+        artifact_contract=artifact_contract,
+    )
     if thread_config is None:
         thread_config = make_thread_config()
     return app.invoke(state, thread_config)

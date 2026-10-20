@@ -12,7 +12,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import gradio as gr
-from langgraph.types import Command
 
 from agent.llm_client import LLMClient
 from agent.state import init_state
@@ -420,7 +419,7 @@ def run_agent_stream(
     compressor = OutputCompressor()
     session.app = build_agent(llm, session.km, compressor)
     session.config = make_thread_config()
-    session.state = init_state(task, dataset_path)
+    session.state = init_state(task, dataset_path, domain="generic")
 
     latest_values = dict(session.state)
     latest_values.setdefault("messages", [])
@@ -535,7 +534,13 @@ def run_agent_stream(
 
     _save_session_from_state(session_state, chatbot, values)
 
-    status = "<div class='status-html-card status-success'>✅ 完整数据推演流程审计圆满结束</div>"
+    verification_passed = values.get("verification_passed", None)
+    if verification_passed is False or values.get("phase") == "verification_failed":
+        status = "<div class='status-html-card status-error'>❌ 交付验证未通过 — 请检查最终报告中的失败项</div>"
+    elif verification_passed is True:
+        status = "<div class='status-html-card status-success'>✅ 交付验证通过，分析流程结束</div>"
+    else:
+        status = "<div class='status-html-card status-success'>✅ 完整数据推演流程审计圆满结束</div>"
     progress_md = _format_progress(latest_values, step_times)
 
     yield (
@@ -607,7 +612,9 @@ def resume_agent_stream(session_state: dict, feedback: str = ""):
 
     while True:
         try:
-            for event in session.app.stream(Command(resume="confirmed"), session.config, stream_mode="updates"):
+            # 静态 interrupt_before 的正确恢复方式是传 None；
+            # Command(resume=...) 在这个图上是 no-op。
+            for event in session.app.stream(None, session.config, stream_mode="updates"):
                 for node_name, node_output in event.items():
                     if node_name == "__interrupt__":
                         continue
@@ -713,7 +720,13 @@ def resume_agent_stream(session_state: dict, feedback: str = ""):
 
     _save_session_from_state(session_state, chatbot, values)
 
-    status = "<div class='status-html-card status-success'>✅ 完整数据推演流程审计圆满结束</div>"
+    verification_passed = values.get("verification_passed", None)
+    if verification_passed is False or values.get("phase") == "verification_failed":
+        status = "<div class='status-html-card status-error'>❌ 交付验证未通过 — 请检查最终报告中的失败项</div>"
+    elif verification_passed is True:
+        status = "<div class='status-html-card status-success'>✅ 交付验证通过，分析流程结束</div>"
+    else:
+        status = "<div class='status-html-card status-success'>✅ 完整数据推演流程审计圆满结束</div>"
     progress_md = _format_progress(latest_values, step_times)
 
     yield (

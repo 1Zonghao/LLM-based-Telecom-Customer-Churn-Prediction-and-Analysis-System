@@ -16,6 +16,11 @@ src/data/images/
 outputs/
 preprocessor.pkl
 processed_data.npz
+processed_data.pkl
+cv_results.pkl
+confusion_matrix_xgb.png
+roc_curve_xgb.png
+feature_importance_xgb.png
 paper_rewriting_output/
 
 # 本地数据集与基准缓存（可从上游重新下载，不入库）

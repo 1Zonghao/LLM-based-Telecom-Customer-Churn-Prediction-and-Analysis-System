@@ -19,8 +19,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from langgraph.types import Command
-
 from agent.llm_client import LLMClient
 from agent.state import init_state
 from agent.graph import build_agent, make_thread_config
@@ -89,83 +87,54 @@ def run_single(
     compressor = OutputCompressor()
     app = build_agent(llm, km, compressor)
     config = make_thread_config()
-    state = init_state(task, str(csv_path))
+    state = init_state(task, str(csv_path), domain="generic")
 
     start_time = time.time()
     total_iterations = 0
     total_stream_count = 0
 
-    try:
-        # Main execution loop: run -> interrupt -> resume -> ...
-        while total_iterations < max_total_iterations:
-            stream = app.stream(state, config, stream_mode="updates")
-            interrupted = False
+    def _accumulate(node_output: dict) -> None:
+        nonlocal total_iterations, total_stream_count
+        for key, value in node_output.items():
+            if key in ("messages", "code_history"):
+                state.setdefault(key, [])
+                if isinstance(value, list):
+                    state[key].extend(value)
+                else:
+                    state[key].append(value)
+            else:
+                state[key] = value
+            if key == "iteration":
+                total_iterations = max(total_iterations, int(value))
+        total_stream_count += 1
 
-            for event in stream:
+    try:
+        # Main loop: first run with the initial state, then resume with None.
+        inputs = state
+        while total_iterations < max_total_iterations:
+            for event in app.stream(inputs, config, stream_mode="updates"):
                 for node_name, node_output in event.items():
                     if node_name == "__interrupt__":
                         continue
+                    _accumulate(node_output)
 
-                    # Accumulate state-like updates manually
-                    for key, value in node_output.items():
-                        if key in ("messages", "code_history"):
-                            state.setdefault(key, [])
-                            if isinstance(value, list):
-                                state[key].extend(value)
-                            else:
-                                state[key].append(value)
-                        else:
-                            state[key] = value
-
-                    if key == "iteration":
-                        total_iterations = max(total_iterations, value)
-
-                    total_stream_count += 1
-
-            # After stream ends, check if we hit a checkpoint
+            # After the stream ends, check whether we stopped at a static checkpoint.
             try:
                 snapshot = app.get_state(config)
-                values = snapshot.values if hasattr(snapshot, "values") else snapshot
             except Exception:
-                values = state
+                break
 
-            next_action = values.get("next_action", "finish")
-            if next_action in ("checkpoint_fe", "checkpoint_model"):
-                # Auto-confirm: inject empty feedback and resume
-                phase_label = values.get("phase", "unknown")
-                print(f"  [CHECKPOINT] {next_action} at phase={phase_label} — auto-confirming...")
+            next_nodes = tuple(getattr(snapshot, "next", ()) or ())
+            if next_nodes and any(str(n).startswith("checkpoint") for n in next_nodes):
+                print(f"  [CHECKPOINT] {next_nodes} — auto-confirming...")
                 try:
                     app.update_state(config, {"user_feedback": ""})
                 except Exception:
                     pass
-                # Resume with Command
-                state = values  # carry forward
-                try:
-                    # Send resume command; next loop will consume it
-                    for event in app.stream(Command(resume="confirmed"), config, stream_mode="updates"):
-                        for node_name, node_output in event.items():
-                            if node_name == "__interrupt__":
-                                continue
-                            for key, value in node_output.items():
-                                if key in ("messages", "code_history"):
-                                    state.setdefault(key, [])
-                                    if isinstance(value, list):
-                                        state[key].extend(value)
-                                    else:
-                                        state[key].append(value)
-                                else:
-                                    state[key] = value
-                                if key == "iteration":
-                                    total_iterations = max(total_iterations, value)
-                            total_stream_count += 1
-                except Exception as e:
-                    result["error"] = f"Resume failed: {e}"
-                    print(f"  [ERROR] Resume failed: {e}")
-                    break
-                continue  # go back to while loop to handle next interrupt
-            else:
-                # Normal finish
-                break
+                # Static interrupts resume by passing None (Command(resume=...) is a no-op here)
+                inputs = None
+                continue
+            break
 
         duration = time.time() - start_time
         result["duration_sec"] = round(duration, 2)

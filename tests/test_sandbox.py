@@ -4,10 +4,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+import pytest
+
 from sandbox.kernel_manager import KernelManager
 from sandbox.compressor import OutputCompressor
 
 DATASET = Path(__file__).resolve().parent.parent / "data" / "WA_Fn-UseC_-Telco-Customer-Churn.csv"
+
+
+@pytest.fixture(scope="module")
+def km():
+    manager = KernelManager()
+    manager.start()
+    yield manager
+    manager.shutdown()
+
+
+@pytest.fixture(scope="module")
+def comp():
+    return OutputCompressor()
 
 
 def test_basic_execution(km: KernelManager) -> None:
