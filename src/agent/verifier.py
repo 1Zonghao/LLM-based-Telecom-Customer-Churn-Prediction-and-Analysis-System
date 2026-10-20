@@ -245,6 +245,8 @@ def _check_metric(contract: dict, checks: list[dict]) -> dict:
             )
 
         labels[target_column] = _to_numeric_target(labels[target_column])
+        labels[id_column] = _normalize_id(labels[id_column])
+        predictions[id_column] = _normalize_id(predictions[id_column])
         pred_target = predictions[target_column]
         if pd.api.types.is_numeric_dtype(pred_target):
             # 概率预测：检测是否为 0/1 硬标签
@@ -323,6 +325,17 @@ def _compute_metric(y_true: pd.Series, y_pred: pd.Series, metric: str) -> float:
     raise ValueError(f"不支持的指标: {metric}")
 
 
+def _normalize_id(series: pd.Series) -> pd.Series:
+    """统一 id 类型，避免 int/float/string 造成的合并失败。"""
+    if pd.api.types.is_numeric_dtype(series):
+        return series.astype("int64").astype(str)
+    text = series.astype(str).str.strip()
+    numeric_like = pd.to_numeric(text, errors="coerce")
+    if numeric_like.notna().all() and (numeric_like % 1 == 0).all():
+        return numeric_like.astype("int64").astype(str)
+    return text
+
+
 def _to_numeric_target(series: pd.Series) -> pd.Series:
     if pd.api.types.is_numeric_dtype(series):
         return series
@@ -332,7 +345,73 @@ def _to_numeric_target(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
 
 
-def format_verification_feedback(result: dict) -> str:
+SELF_CHECK_TEMPLATE = '''\
+```python
+import os
+import pandas as pd
+
+pred_path = r"__PRED__"
+__REPORT_LINES__target = "__TARGET__"
+expected_rows = __ROWS__
+
+assert os.path.exists(pred_path), "预测文件不存在"
+pred = pd.read_csv(pred_path)
+__ROWS_ASSERT__assert list(pred.columns) == ["__ID__", target], f"列名错误: {list(pred.columns)}"
+assert pred["__ID__"].is_unique, "id 有重复"
+assert pred[target].notna().all(), "预测列有缺失"
+__RANGE_LINES__print("SELF-CHECK PASSED")
+```'''
+
+
+def build_submission_self_check(contract: dict | None) -> str:
+    """按交付物契约生成一段可执行的自检代码。"""
+    if not contract:
+        return ""
+    pred_spec = next(
+        (s for s in contract.get("required_files", []) if s.get("format") == "csv"),
+        None,
+    )
+    if pred_spec is None:
+        return ""
+    report_spec = next(
+        (s for s in contract.get("required_files", []) if s.get("format") in ("text", "md", "markdown")),
+        None,
+    )
+
+    report_lines = ""
+    if report_spec is not None:
+        report_lines = f'report_path = r"{report_spec["path"]}"\n'
+    target = pred_spec.get("target_column") or contract.get("target_column", "target")
+    id_column = pred_spec.get("id_column") or contract.get("id_column", "id")
+    rows = pred_spec.get("expected_rows")
+
+    rows_assert = ""
+    if rows is not None:
+        rows_assert = 'assert len(pred) == expected_rows, f"行数错误: {len(pred)}"\n'
+
+    range_lines = ""
+    if pred_spec.get("probability", False):
+        range_lines = 'assert pred[target].between(0, 1).all(), "预测值不是概率"\n'
+    if report_spec is not None:
+        min_chars = int(report_spec.get("min_chars", MIN_REPORT_CHARS))
+        range_lines += (
+            f'assert os.path.getsize(report_path) >= {min_chars}, "报告文件不存在或太短"\n'
+        )
+
+    code = (
+        SELF_CHECK_TEMPLATE
+        .replace("__PRED__", str(pred_spec["path"]))
+        .replace("__REPORT_LINES__", report_lines)
+        .replace("__TARGET__", target)
+        .replace("__ID__", id_column)
+        .replace("__ROWS__", str(rows if rows is not None else "None"))
+        .replace("__ROWS_ASSERT__", rows_assert)
+        .replace("__RANGE_LINES__", range_lines)
+    )
+    return code
+
+
+def format_verification_feedback(result: dict, contract: dict | None = None) -> str:
     """把验证失败结果转成给 LLM 的修复指令。"""
     lines = ["[验证失败] 交付物检查未通过："]
     for check in result.get("checks", []):
@@ -343,6 +422,13 @@ def format_verification_feedback(result: dict) -> str:
         "请先修复以上问题，实际重新生成交付物，并再次输出最终报告。"
         "不要只解释方案，必须写文件。"
     )
+    self_check = build_submission_self_check(contract)
+    if self_check:
+        lines.append("")
+        lines.append(
+            "修复后，请先运行下面这段自检代码；只有打印 `SELF-CHECK PASSED` 才能输出最终报告："
+        )
+        lines.append(self_check)
     return "\n".join(lines)
 
 

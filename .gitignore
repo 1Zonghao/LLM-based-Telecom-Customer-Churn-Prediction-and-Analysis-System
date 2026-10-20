@@ -23,6 +23,24 @@ roc_curve_xgb.png
 feature_importance_xgb.png
 paper_rewriting_output/
 
+# 实验过程中智能体在根目录生成的中间产物
+X_*_fe.*
+y_train_fe.csv
+oof_pred.npy
+model_report.txt
+cv_results.csv
+submission*.csv
+processed/
+processed_features.pkl
+test_raw.pkl
+train_raw.pkl
+train_processed_meta.pkl
+test_ids.csv
+test_processed.csv
+train_processed.csv
+y_test.csv
+y_train.csv
+
 # 本地数据集与基准缓存（可从上游重新下载，不入库）
 data/benchmarks/
 data/uci_datasets/

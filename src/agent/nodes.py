@@ -194,6 +194,7 @@ def make_verifier_node() -> Callable:
         if result["passed"]:
             updates: dict = {
                 "verification_result": result,
+                "verification_history": [result],
                 "verification_passed": True,
                 "next_action": "finish",
                 "phase": "completed",
@@ -215,6 +216,7 @@ def make_verifier_node() -> Callable:
         if retries >= max_retries:
             return {
                 "verification_result": result,
+                "verification_history": [result],
                 "verification_passed": False,
                 "next_action": "finish",
                 "phase": "verification_failed",
@@ -227,13 +229,14 @@ def make_verifier_node() -> Callable:
 
         return {
             "verification_result": result,
+            "verification_history": [result],
             "verification_passed": False,
             "verification_retries": retries + 1,
             "next_action": "repair",
             "phase": "verification_repair",
             "messages": [{
                 "role": "user",
-                "content": format_verification_feedback(result),
+                "content": format_verification_feedback(result, contract),
             }],
         }
 
@@ -274,6 +277,7 @@ def _build_messages(state: AgentState) -> list[dict]:
                 data_path=state["data_path"],
                 phase=state.get("phase", "eda"),
                 artifact_contract=_format_contract(state.get("artifact_contract")),
+                skill_context=state.get("skill_context") or "暂无",
             ),
         })
     else:

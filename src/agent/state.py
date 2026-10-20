@@ -37,12 +37,16 @@ class AgentState(TypedDict):
     artifact_contract: dict
     # 最近一次交付验证结果
     verification_result: dict
+    # 全部验证历史（每轮 verifier 结果，用于沉淀经验）
+    verification_history: Annotated[List[dict], operator.add]
     # 已执行的验证重试次数
     verification_retries: int
     # 允许的最大验证重试次数
     max_verification_retries: int
     # 是否通过交付验证
     verification_passed: bool
+    # 从 skill library 检索并注入的过往经验
+    skill_context: str
 
 
 def init_state(
@@ -51,6 +55,7 @@ def init_state(
     domain: str = "generic",
     artifact_contract: dict | None = None,
     max_verification_retries: int | None = None,
+    skill_context: str = "",
 ) -> AgentState:
     contract = artifact_contract or {}
     retries = (
@@ -76,7 +81,9 @@ def init_state(
         "domain": domain,
         "artifact_contract": contract,
         "verification_result": {},
+        "verification_history": [],
         "verification_retries": 0,
         "max_verification_retries": max(0, retries),
         "verification_passed": False,
+        "skill_context": skill_context,
     }

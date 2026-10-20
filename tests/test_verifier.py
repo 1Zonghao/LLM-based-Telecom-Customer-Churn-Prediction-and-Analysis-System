@@ -8,6 +8,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from agent.verifier import (
+    build_submission_self_check,
     format_verification_feedback,
     make_prediction_contract,
     verify_artifacts,
@@ -161,6 +162,37 @@ def test_feedback_lists_only_failures(tmp_path):
     assert "[验证失败]" in feedback
     assert "file_exists" in feedback
     assert "必须写文件" in feedback
+
+
+def test_feedback_includes_executable_self_check(tmp_path):
+    pred = tmp_path / "pred.csv"
+    report = tmp_path / "report.md"
+    contract = make_prediction_contract(
+        tmp_path,
+        pred,
+        report,
+        target_column="Churn",
+        expected_rows=5,
+        probability=True,
+    )
+    result = verify_artifacts(contract, _state())
+    feedback = format_verification_feedback(result, contract)
+
+    assert "SELF-CHECK PASSED" in feedback
+    assert "expected_rows = 5" in feedback
+    assert "between(0, 1)" in feedback
+    assert "os.path.getsize(report_path)" in feedback
+
+
+def test_self_check_omits_row_assert_when_not_specified(tmp_path):
+    contract = make_prediction_contract(
+        tmp_path,
+        tmp_path / "pred.csv",
+        target_column="Churn",
+    )
+    snippet = build_submission_self_check(contract)
+    assert "expected_rows" in snippet
+    assert "行数错误" not in snippet
 
 
 def test_no_contract_passes_for_backward_compatibility():

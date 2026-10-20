@@ -74,6 +74,7 @@ def test_verifier_forces_repair_then_passes(tmp_path):
     assert final["verification_passed"] is True, final.get("verification_result")
     assert final["phase"] == "completed"
     assert final["verification_retries"] == 1
+    assert len(final["verification_history"]) == 2
     assert pred.exists() and report.exists()
 
 

@@ -20,8 +20,6 @@ import os
 import sys
 import time
 import traceback
-import urllib.error
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -139,19 +137,31 @@ def _normalize_predictions(pred: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def score_predictions(pred_path: Path, label_path: Path = HOLDOUT_LABELS) -> dict:
+def score_predictions(
+    pred_path: Path,
+    label_path: Path = HOLDOUT_LABELS,
+    target_column: str = "Churn",
+    id_column: str = "id",
+) -> dict:
     pred = _normalize_predictions(pd.read_csv(pred_path))
     labels = pd.read_csv(label_path)
-    labels["Churn"] = _map_target(labels["Churn"])
+    if target_column not in labels.columns:
+        raise KeyError(
+            f"标签文件缺少目标列 {target_column!r}，实际列: {list(labels.columns)}"
+        )
+    labels[target_column] = _map_target(labels[target_column])
     pred["id"] = _normalize_id(pred["id"])
-    labels["id"] = _normalize_id(labels["id"])
+    labels[id_column] = _normalize_id(labels[id_column])
+    labels = labels.rename(columns={target_column: "target"})
+    if id_column != "id":
+        labels = labels.rename(columns={id_column: "id"})
 
     merged = labels.merge(pred, on="id", how="left", validate="one_to_one")
     missing = int(merged["prediction"].isna().sum())
     if missing:
         raise ValueError(f"有 {missing} 个留出样本没有预测值")
 
-    y_true = merged["Churn"].to_numpy()
+    y_true = merged["target"].to_numpy()
     raw = merged["prediction"].to_numpy()
     is_probability = np.issubdtype(raw.dtype, np.number) and raw.min() >= 0 and raw.max() <= 1
     if not is_probability:
@@ -308,115 +318,6 @@ def _build_task_prompt(
 """
 
 
-class AnthropicLLMClient:
-    """Anthropic Messages API 适配器（用于 DeepSeek 的 /anthropic 端点）。
-
-    与 LLMClient 保持相同的 chat() 接口，返回 (文本, token_usage)。
-    """
-
-    def __init__(
-        self,
-        model: str | None = None,
-        api_key: str | None = None,
-        base_url: str | None = None,
-        max_tokens: int = 8192,
-    ):
-        self.model = model or os.getenv("ANTHROPIC_MODEL", "deepseek-v4-pro[1m]")
-        self.api_key = api_key or os.getenv("ANTHROPIC_AUTH_TOKEN", "")
-        self.base_url = (base_url or os.getenv("ANTHROPIC_BASE_URL", "")).rstrip("/")
-        self.max_tokens = max_tokens
-        self.max_retries = 2
-
-    @property
-    def is_configured(self) -> bool:
-        return bool(self.api_key and self.base_url)
-
-    def chat(self, messages: list[dict], temperature: float = 0.1) -> tuple[str, dict]:
-        system_parts = [m.get("content", "") for m in messages if m.get("role") == "system"]
-        convo: list[dict] = []
-        for message in messages:
-            role = message.get("role")
-            if role not in ("user", "assistant"):
-                continue
-            content = message.get("content", "")
-            if isinstance(content, list):
-                content = "\n".join(
-                    str(item.get("text", item)) if isinstance(item, dict) else str(item)
-                    for item in content
-                )
-            if convo and convo[-1]["role"] == role:
-                convo[-1]["content"] += "\n\n" + content
-            else:
-                convo.append({"role": role, "content": content})
-        if not convo:
-            convo = [{"role": "user", "content": ""}]
-
-        payload = {
-            "model": self.model,
-            "max_tokens": self.max_tokens,
-            "temperature": temperature,
-            "messages": convo,
-        }
-        if system_parts:
-            payload["system"] = "\n\n".join(system_parts)
-
-        headers = {
-            "Content-Type": "application/json",
-            "x-api-key": self.api_key,
-            "anthropic-version": "2023-06-01",
-        }
-        last_error = None
-        for attempt in range(self.max_retries + 1):
-            try:
-                request = urllib.request.Request(
-                    self.base_url + "/v1/messages",
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers=headers,
-                    method="POST",
-                )
-                with urllib.request.urlopen(request, timeout=180) as response:
-                    body = json.loads(response.read().decode("utf-8"))
-                text = "".join(
-                    block.get("text", "")
-                    for block in body.get("content", [])
-                    if block.get("type") == "text"
-                )
-                usage_raw = body.get("usage", {})
-                prompt_tokens = int(usage_raw.get("input_tokens", 0) or 0)
-                completion_tokens = int(usage_raw.get("output_tokens", 0) or 0)
-                if not text.strip():
-                    raise RuntimeError(
-                        "Anthropic response contained no text "
-                        f"(stop_reason={body.get('stop_reason')})"
-                    )
-                return text, {
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": prompt_tokens + completion_tokens,
-                }
-            except urllib.error.HTTPError as exc:
-                last_error = exc
-                if attempt < self.max_retries:
-                    time.sleep(2 ** attempt)
-            except Exception as exc:
-                last_error = exc
-                if attempt < self.max_retries:
-                    time.sleep(2 ** attempt)
-        raise RuntimeError(
-            f"Anthropic API request failed after {self.max_retries + 1} attempts: {last_error}"
-        )
-
-
-def _build_llm(provider: str):
-    sys.path.insert(0, str(PROJECT_ROOT / "src"))
-    from agent.llm_client import LLMClient
-
-    if provider == "auto":
-        provider = "anthropic" if os.getenv("ANTHROPIC_AUTH_TOKEN") else "openai"
-    if provider == "anthropic":
-        return AnthropicLLMClient()
-    return LLMClient()
-
 
 def _run_agent(
     max_iter: int,
@@ -438,7 +339,9 @@ def _run_agent(
 
     nodes.MAX_ITERATIONS = max_iter
 
-    llm = _build_llm(provider)
+    from agent.llm_client import build_llm_client
+
+    llm = build_llm_client(provider)
     if not llm.is_configured:
         raise SystemExit("LLM 未配置，无法运行智能体")
 
