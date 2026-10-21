@@ -45,7 +45,7 @@ def run_episode(
     from agent import nodes
 
     nodes.MAX_ITERATIONS = max_iter
-    hard_cap = max_reasoning_calls or (max_iter + 4)
+    hard_cap = max_reasoning_calls or (max_iter + 8)
 
     factory = kernel_factory or KernelManager
     km = factory()
@@ -147,6 +147,9 @@ def run_episode(
         "verification_result": final_values.get("verification_result", {}),
         "verification_passed": final_values.get("verification_passed", None),
         "verification_retries": final_values.get("verification_retries", 0),
+        "pre_submit_result": final_values.get("pre_submit_result", {}),
+        "pre_submit_history": final_values.get("pre_submit_history", []),
+        "pre_submit_failures": final_values.get("pre_submit_failures", 0),
         "skill_context": skill_context,
         "transcript": transcript,
     }

@@ -1,5 +1,6 @@
 import re
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Callable
 
 from .state import AgentState
@@ -12,6 +13,8 @@ from .prompts import (
     VERIFICATION_CONTINUE_PROMPT,
 )
 from .verifier import (
+    build_submission_self_check_code,
+    format_pre_submit_feedback,
     format_verification_feedback,
     format_verification_report,
     verify_artifacts,
@@ -31,7 +34,10 @@ def make_reasoning_node(llm: LLMClient) -> Callable:
     def reasoning_node(state: AgentState) -> dict:
         # 安全阀：达到迭代上限后不再调用 LLM，直接进入交付验证。
         # 每次验证重试额外给 2 次动作预算，避免“修复代码还没跑就被截断”。
-        max_iterations = MAX_ITERATIONS + state.get("verification_retries", 0) * 2
+        extra_attempts = (
+            state.get("verification_retries", 0) + state.get("pre_submit_failures", 0)
+        )
+        max_iterations = MAX_ITERATIONS + extra_attempts * 2
         if state.get("iteration", 0) >= max_iterations:
             return {
                 "messages": [{
@@ -184,6 +190,77 @@ def make_checkpoint_model_node() -> Callable:
     return checkpoint_model_node
 
 
+def make_pre_submit_node(km: KernelManager) -> Callable:
+    """提交前强制自检：直接在内核里执行契约生成的自检代码。
+
+    这个节点不调用 LLM，也不依赖智能体“是否愿意执行”自检。
+    它拦截 reasoning 的 finish，只有自检通过才允许进入 verifier。
+    """
+
+    def pre_submit_node(state: AgentState) -> dict:
+        contract = state.get("artifact_contract") or {}
+        code = build_submission_self_check_code(contract)
+        if not code:
+            return {
+                "pre_submit_result": {"passed": True, "skipped": True},
+                "next_action": "verify",
+            }
+
+        try:
+            result = km.execute(code, timeout=60)
+            error = result.error or ""
+            output = (result.text or "").strip()
+            passed = (not result.has_error) and ("SELF-CHECK PASSED" in output)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            output = ""
+            passed = False
+
+        record = {
+            "passed": passed,
+            "skipped": False,
+            "error": str(error)[:1200] if error else "",
+            "output": output[:1200],
+        }
+
+        if passed:
+            return {
+                "pre_submit_result": record,
+                "pre_submit_history": [record],
+                "next_action": "verify",
+                "messages": [{
+                    "role": "system",
+                    "content": "[提交前自检通过] 交付物已通过强制自检，进入最终验证。",
+                }],
+            }
+
+        failures = int(state.get("pre_submit_failures", 0)) + 1
+        max_failures = int(state.get("max_verification_retries", 2))
+        feedback = format_pre_submit_feedback(
+            SimpleNamespace(error=error, text=output),
+            contract,
+        )
+        updates = {
+            "pre_submit_result": record,
+            "pre_submit_history": [record],
+            "pre_submit_failures": failures,
+            "messages": [{"role": "user", "content": feedback}],
+        }
+        if failures >= max_failures:
+            # 自检预算用完：交给 verifier 做最终判定
+            updates["next_action"] = "verify"
+        else:
+            updates["next_action"] = "repair"
+        return updates
+
+    return pre_submit_node
+
+
+def pre_submit_router(state: AgentState) -> str:
+    """pre-submit 路由：失败回 reasoning 修复，通过则进入 verifier。"""
+    return "repair" if state.get("next_action") == "repair" else "verify"
+
+
 def make_verifier_node() -> Callable:
     """交付验证节点：检查契约，决定通过、修复还是终止。"""
 
@@ -288,7 +365,10 @@ def _build_messages(state: AgentState) -> list[dict]:
         last_msg = state["messages"][-1] if state["messages"] else {}
         last_content = last_msg.get("content", "")
         is_error = "[执行错误]" in last_content
-        is_verification_failure = "[验证失败]" in last_content
+        is_verification_failure = (
+            "[验证失败]" in last_content
+            or "[提交前自检未通过]" in last_content
+        )
 
         if is_verification_failure:
             msgs.append({

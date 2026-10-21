@@ -22,6 +22,11 @@ class FakeKernel:
         self.report_path = report_path
 
     def execute(self, code: str, timeout: int = 120) -> ExecutionResult:
+        if "SELF-CHECK PASSED" in code:
+            report_ok = self.report_path is None or self.report_path.exists()
+            if self.pred_path.exists() and report_ok:
+                return ExecutionResult(text="SELF-CHECK PASSED")
+            return ExecutionResult(text="", error="AssertionError: 预测文件不存在")
         if "WRITE_ARTIFACTS" in code:
             pd.DataFrame({
                 "id": [1, 2, 3],
@@ -73,8 +78,10 @@ def test_verifier_forces_repair_then_passes(tmp_path):
 
     assert final["verification_passed"] is True, final.get("verification_result")
     assert final["phase"] == "completed"
-    assert final["verification_retries"] == 1
-    assert len(final["verification_history"]) == 2
+    assert final["pre_submit_failures"] == 1
+    assert final["verification_retries"] == 0
+    assert len(final["verification_history"]) == 1
+    assert len(final["pre_submit_history"]) == 2
     assert pred.exists() and report.exists()
 
 

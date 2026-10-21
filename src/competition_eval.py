@@ -360,7 +360,7 @@ def _run_agent(
     transcript: list[dict] = []
     reasoning_calls = 0
     iteration = 0
-    hard_cap = max_iter + 4  # 验证重试会额外消耗动作预算
+    hard_cap = max_iter + 8  # pre-submit + verifier 重试会额外消耗动作预算
     started = time.time()
     finished_normally = False
     error = ""
@@ -438,6 +438,9 @@ def _run_agent(
         "verification_result": final_values.get("verification_result", {}) if isinstance(final_values, dict) else {},
         "verification_passed": final_values.get("verification_passed", None) if isinstance(final_values, dict) else None,
         "verification_retries": final_values.get("verification_retries", 0) if isinstance(final_values, dict) else 0,
+        "pre_submit_result": final_values.get("pre_submit_result", {}) if isinstance(final_values, dict) else {},
+        "pre_submit_history": final_values.get("pre_submit_history", []) if isinstance(final_values, dict) else [],
+        "pre_submit_failures": final_values.get("pre_submit_failures", 0) if isinstance(final_values, dict) else 0,
         "transcript": transcript,
     }
     return result

@@ -39,6 +39,7 @@ def _aggregate(df: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
         n=("dataset", "size"),
         verified_rate=("verified", "mean"),
         mean_retries=("verification_retries", "mean"),
+        mean_pre_submit_failures=("pre_submit_failures", "mean"),
         mean_tokens=("tokens", "mean"),
         mean_duration_sec=("duration_sec", "mean"),
         mean_auc=("auc", "mean"),

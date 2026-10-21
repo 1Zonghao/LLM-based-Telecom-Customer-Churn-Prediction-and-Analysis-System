@@ -9,6 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from agent.verifier import (
     build_submission_self_check,
+    build_submission_self_check_code,
+    format_pre_submit_feedback,
     format_verification_feedback,
     make_prediction_contract,
     verify_artifacts,
@@ -193,6 +195,41 @@ def test_self_check_omits_row_assert_when_not_specified(tmp_path):
     snippet = build_submission_self_check(contract)
     assert "expected_rows" in snippet
     assert "行数错误" not in snippet
+
+
+def test_raw_self_check_code_has_no_markdown_fence(tmp_path):
+    contract = make_prediction_contract(
+        tmp_path,
+        tmp_path / "pred.csv",
+        target_column="Churn",
+        expected_rows=5,
+    )
+    raw = build_submission_self_check_code(contract)
+    fenced = build_submission_self_check(contract)
+
+    assert not raw.startswith("```")
+    assert "SELF-CHECK PASSED" in raw
+    assert "expected_rows = 5" in raw
+    assert fenced.startswith("```python")
+    assert raw in fenced
+
+
+def test_pre_submit_feedback_includes_error_and_check(tmp_path):
+    contract = make_prediction_contract(
+        tmp_path,
+        tmp_path / "pred.csv",
+        target_column="Churn",
+        expected_rows=5,
+    )
+
+    class Result:
+        error = "AssertionError: 预测文件不存在"
+        text = ""
+
+    feedback = format_pre_submit_feedback(Result(), contract)
+    assert "[提交前自检未通过]" in feedback
+    assert "预测文件不存在" in feedback
+    assert "SELF-CHECK PASSED" in feedback
 
 
 def test_no_contract_passes_for_backward_compatibility():

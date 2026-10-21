@@ -430,6 +430,7 @@ def run_experiment(args: argparse.Namespace) -> None:
                 "skill_mode": args.skill_mode,
                 "verified": bool(result.get("verification_passed")),
                 "verification_retries": result.get("verification_retries", 0),
+                "pre_submit_failures": result.get("pre_submit_failures", 0),
                 "phase": result.get("phase", ""),
                 "auc": metrics.get("auc"),
                 "best_f1": best_f1.get("f1"),

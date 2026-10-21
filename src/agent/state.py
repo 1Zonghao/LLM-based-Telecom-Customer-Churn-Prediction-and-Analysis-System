@@ -45,6 +45,10 @@ class AgentState(TypedDict):
     max_verification_retries: int
     # 是否通过交付验证
     verification_passed: bool
+    # 提交前强制自检结果 / 历史 / 失败次数
+    pre_submit_result: dict
+    pre_submit_history: Annotated[List[dict], operator.add]
+    pre_submit_failures: int
     # 从 skill library 检索并注入的过往经验
     skill_context: str
 
@@ -85,5 +89,8 @@ def init_state(
         "verification_retries": 0,
         "max_verification_retries": max(0, retries),
         "verification_passed": False,
+        "pre_submit_result": {},
+        "pre_submit_history": [],
+        "pre_submit_failures": 0,
         "skill_context": skill_context,
     }

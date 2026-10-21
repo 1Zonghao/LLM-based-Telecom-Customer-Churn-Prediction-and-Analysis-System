@@ -345,8 +345,7 @@ def _to_numeric_target(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
 
 
-SELF_CHECK_TEMPLATE = '''\
-```python
+SELF_CHECK_BODY_TEMPLATE = '''\
 import os
 import pandas as pd
 
@@ -360,11 +359,11 @@ __ROWS_ASSERT__assert list(pred.columns) == ["__ID__", target], f"列名错误: 
 assert pred["__ID__"].is_unique, "id 有重复"
 assert pred[target].notna().all(), "预测列有缺失"
 __RANGE_LINES__print("SELF-CHECK PASSED")
-```'''
+'''
 
 
-def build_submission_self_check(contract: dict | None) -> str:
-    """按交付物契约生成一段可执行的自检代码。"""
+def build_submission_self_check_code(contract: dict | None) -> str:
+    """按交付物契约生成一段可直接在沙箱执行的自检代码（不含 Markdown 围栏）。"""
     if not contract:
         return ""
     pred_spec = next(
@@ -398,8 +397,8 @@ def build_submission_self_check(contract: dict | None) -> str:
             f'assert os.path.getsize(report_path) >= {min_chars}, "报告文件不存在或太短"\n'
         )
 
-    code = (
-        SELF_CHECK_TEMPLATE
+    return (
+        SELF_CHECK_BODY_TEMPLATE
         .replace("__PRED__", str(pred_spec["path"]))
         .replace("__REPORT_LINES__", report_lines)
         .replace("__TARGET__", target)
@@ -408,7 +407,14 @@ def build_submission_self_check(contract: dict | None) -> str:
         .replace("__ROWS_ASSERT__", rows_assert)
         .replace("__RANGE_LINES__", range_lines)
     )
-    return code
+
+
+def build_submission_self_check(contract: dict | None) -> str:
+    """按交付物契约生成一段可执行的自检代码（Markdown 围栏，用于提示词/反馈）。"""
+    code = build_submission_self_check_code(contract)
+    if not code:
+        return ""
+    return f"```python\n{code}```"
 
 
 def format_verification_feedback(result: dict, contract: dict | None = None) -> str:
@@ -429,6 +435,28 @@ def format_verification_feedback(result: dict, contract: dict | None = None) -> 
             "修复后，请先运行下面这段自检代码；只有打印 `SELF-CHECK PASSED` 才能输出最终报告："
         )
         lines.append(self_check)
+    return "\n".join(lines)
+
+
+def format_pre_submit_feedback(result, contract: dict | None = None) -> str:
+    """把 pre-submit 自检失败转成给 LLM 的修复指令。"""
+    error = getattr(result, "error", None) or ""
+    text = getattr(result, "text", "") or ""
+
+    lines = ["[提交前自检未通过] 交付物还没有达到可提交状态。"]
+    if error:
+        lines.append(f"- 错误：{str(error)[:1200]}")
+    if text.strip():
+        lines.append(f"- 输出：{text.strip()[:1200]}")
+    if not error and not text.strip():
+        lines.append("- 自检没有打印 SELF-CHECK PASSED（可能文件缺失或断言失败）")
+    lines.append("")
+    lines.append("请修复后重新生成交付物，并再次输出最终报告。不要只解释方案，必须写文件。")
+    code = build_submission_self_check(contract)
+    if code:
+        lines.append("")
+        lines.append("自检代码：")
+        lines.append(code)
     return "\n".join(lines)
 
 

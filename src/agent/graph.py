@@ -10,7 +10,9 @@ from .nodes import (
     make_action_node,
     make_checkpoint_fe_node,
     make_checkpoint_model_node,
+    make_pre_submit_node,
     make_verifier_node,
+    pre_submit_router,
     router,
     verifier_router,
 )
@@ -40,6 +42,7 @@ def build_agent(
     action = make_action_node(km, compressor)
     checkpoint_fe = make_checkpoint_fe_node()
     checkpoint_model = make_checkpoint_model_node()
+    pre_submit = make_pre_submit_node(km)
     verifier = make_verifier_node()
 
     graph = StateGraph(AgentState)
@@ -47,16 +50,23 @@ def build_agent(
     graph.add_node("action", action)
     graph.add_node("checkpoint_fe", checkpoint_fe)
     graph.add_node("checkpoint_model", checkpoint_model)
+    graph.add_node("pre_submit", pre_submit)
     graph.add_node("verifier", verifier)
 
     graph.set_entry_point("reasoning")
 
-    # 智能体声称完成时，先进入交付验证，而不是直接结束
+    # 智能体声称完成时，先跑强制自检，再进入交付验证
     graph.add_conditional_edges("reasoning", router, {
         "execute": "action",
         "checkpoint_fe": "checkpoint_fe",
         "checkpoint_model": "checkpoint_model",
-        "finish": "verifier",
+        "finish": "pre_submit",
+    })
+
+    # 强制自检：失败回推理修复，通过则进入 verifier
+    graph.add_conditional_edges("pre_submit", pre_submit_router, {
+        "repair": "reasoning",
+        "verify": "verifier",
     })
 
     # 验证器：通过则结束，失败则回到推理修复
