@@ -24,6 +24,7 @@ def run_episode(
     max_iter: int = 20,
     max_reasoning_calls: int | None = None,
     skill_context: str = "",
+    active_skill_keys: list[str] | None = None,
     kernel_factory: Callable[[], KernelManager] | None = None,
 ) -> dict:
     """执行一次完整分析 episode，自动确认静态断点。
@@ -61,6 +62,7 @@ def run_episode(
         domain=domain,
         artifact_contract=artifact_contract,
         skill_context=skill_context,
+        active_skill_keys=active_skill_keys,
     )
 
     transcript: list[dict] = []
@@ -151,6 +153,7 @@ def run_episode(
         "pre_submit_history": final_values.get("pre_submit_history", []),
         "pre_submit_failures": final_values.get("pre_submit_failures", 0),
         "skill_context": skill_context,
+        "active_skill_keys": active_skill_keys or [],
         "transcript": transcript,
     }
 

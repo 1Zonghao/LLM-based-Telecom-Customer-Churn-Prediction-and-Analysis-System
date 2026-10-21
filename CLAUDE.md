@@ -37,7 +37,7 @@
 | --- | --- | --- |
 | 前端 | Gradio | 支持流式输出、图表渲染及断点交互设计 |
 | 智能体框架 | LangGraph | 利用其 State Graph 实现严谨的控制流与断点挂起 |
-| LLM API | deepseek-v4-pro | 核心推理与代码生成引擎 |
+| LLM API | deepseek-flash[1m] | 核心推理与代码生成引擎 |
 | 代码执行沙箱 | **Jupyter Kernel (gRPC 或 E2B Sandbox)** | **核心优化**：维持有状态内存，避免重复加载数据，原生支持富文本和图像捕获 |
 | 数据处理与建模 | Pandas, Scikit-learn, XGBoost, Imblearn | 容器内预置标准数据科学全家桶 |
 | 环境管理 | Docker | 物理隔离代码执行环境，防止越权访问 |

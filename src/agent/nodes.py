@@ -15,8 +15,10 @@ from .prompts import (
 from .verifier import (
     build_submission_self_check_code,
     format_pre_submit_feedback,
+    format_skill_check_feedback,
     format_verification_feedback,
     format_verification_report,
+    run_skill_checks,
     verify_artifacts,
 )
 from sandbox.kernel_manager import KernelManager
@@ -200,27 +202,36 @@ def make_pre_submit_node(km: KernelManager) -> Callable:
     def pre_submit_node(state: AgentState) -> dict:
         contract = state.get("artifact_contract") or {}
         code = build_submission_self_check_code(contract)
-        if not code:
+        skill_checks = run_skill_checks(state)
+
+        if not code and not skill_checks:
             return {
                 "pre_submit_result": {"passed": True, "skipped": True},
                 "next_action": "verify",
             }
 
-        try:
-            result = km.execute(code, timeout=60)
-            error = result.error or ""
-            output = (result.text or "").strip()
-            passed = (not result.has_error) and ("SELF-CHECK PASSED" in output)
-        except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
-            output = ""
-            passed = False
+        base_passed = True
+        error = ""
+        output = ""
+        if code:
+            try:
+                result = km.execute(code, timeout=60)
+                error = result.error or ""
+                output = (result.text or "").strip()
+                base_passed = (not result.has_error) and ("SELF-CHECK PASSED" in output)
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+                base_passed = False
+
+        skills_passed = all(check.get("passed") for check in skill_checks)
+        passed = base_passed and skills_passed
 
         record = {
             "passed": passed,
             "skipped": False,
             "error": str(error)[:1200] if error else "",
             "output": output[:1200],
+            "skill_checks": skill_checks,
         }
 
         if passed:
@@ -230,16 +241,28 @@ def make_pre_submit_node(km: KernelManager) -> Callable:
                 "next_action": "verify",
                 "messages": [{
                     "role": "system",
-                    "content": "[提交前自检通过] 交付物已通过强制自检，进入最终验证。",
+                    "content": (
+                        "[提交前自检通过] 交付物已通过强制自检"
+                        f"（{len(skill_checks)} 项技能检查），进入最终验证。"
+                    ),
                 }],
             }
 
+        feedback_parts: list[str] = []
+        if not base_passed:
+            feedback_parts.append(
+                format_pre_submit_feedback(
+                    SimpleNamespace(error=error, text=output),
+                    contract,
+                )
+            )
+        skill_feedback = format_skill_check_feedback(skill_checks)
+        if skill_feedback:
+            feedback_parts.append(skill_feedback)
+        feedback = "\n\n".join(feedback_parts)
+
         failures = int(state.get("pre_submit_failures", 0)) + 1
-        max_failures = int(state.get("max_verification_retries", 2))
-        feedback = format_pre_submit_feedback(
-            SimpleNamespace(error=error, text=output),
-            contract,
-        )
+        max_failures = int(state.get("max_pre_submit_failures", 3))
         updates = {
             "pre_submit_result": record,
             "pre_submit_history": [record],

@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +36,10 @@ def make_prediction_contract(
     metric: str | None = None,
     min_metric: float | None = None,
     group_column: str | None = None,
+    forbidden_features: list[str] | None = None,
+    feature_manifest_path: str | Path | None = None,
     max_verification_retries: int = 2,
+    max_pre_submit_failures: int = 3,
     require_final_report: bool = True,
 ) -> dict:
     """构造一个“预测任务”的标准交付物契约。"""
@@ -56,6 +60,13 @@ def make_prediction_contract(
             "format": "text",
             "min_chars": MIN_REPORT_CHARS,
         })
+    if feature_manifest_path is not None:
+        required_files.append({
+            "path": str(feature_manifest_path),
+            "format": "json",
+            "required_keys": ["features"],
+            "features_key": "features",
+        })
     return {
         "output_dir": str(output_dir),
         "required_files": required_files,
@@ -65,7 +76,10 @@ def make_prediction_contract(
         "metric": metric,
         "min_metric": min_metric,
         "group_column": group_column,
+        "forbidden_features": list(forbidden_features or []),
+        "feature_manifest_path": str(feature_manifest_path) if feature_manifest_path else None,
         "max_verification_retries": max_verification_retries,
+        "max_pre_submit_failures": max_pre_submit_failures,
         "require_final_report": require_final_report,
     }
 
@@ -109,6 +123,8 @@ def verify_artifacts(contract: dict | None, state: dict) -> dict:
 
         if fmt == "csv":
             _check_csv(path, spec, checks, artifacts)
+        elif fmt == "json":
+            _check_json(path, spec, checks, artifacts)
         elif fmt in ("text", "md", "markdown"):
             text = path.read_text(encoding="utf-8", errors="ignore")
             min_chars = int(spec.get("min_chars", MIN_REPORT_CHARS))
@@ -122,6 +138,7 @@ def verify_artifacts(contract: dict | None, state: dict) -> dict:
 
     metrics = _check_metric(contract, checks)
     _check_group_validation(contract, state, checks)
+    _check_forbidden_features(contract, state, checks)
 
     require_final_report = contract.get("require_final_report", False)
     if require_final_report:
@@ -209,6 +226,49 @@ def _check_csv(path: Path, spec: dict, checks: list[dict], artifacts: dict) -> N
     }
 
 
+def _check_json(path: Path, spec: dict, checks: list[dict], artifacts: dict) -> None:
+    label = path.name
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        checks.append({
+            "name": f"json_parse:{label}",
+            "passed": False,
+            "detail": f"JSON 解析失败: {type(exc).__name__}: {exc}",
+        })
+        return
+
+    checks.append({
+        "name": f"json_parse:{label}",
+        "passed": True,
+        "detail": "JSON 解析成功",
+    })
+
+    required_keys = spec.get("required_keys", [])
+    missing = [key for key in required_keys if key not in data]
+    checks.append({
+        "name": f"json_keys:{label}",
+        "passed": not missing,
+        "detail": "必需字段齐全" if not missing else f"缺少字段: {missing}",
+    })
+
+    features_key = spec.get("features_key")
+    if features_key and features_key in data:
+        features = data[features_key]
+        passed = isinstance(features, list) and len(features) > 0
+        checks.append({
+            "name": f"features_list:{label}",
+            "passed": passed,
+            "detail": (
+                f"特征清单包含 {len(features)} 个特征"
+                if passed
+                else "features 必须是非空列表"
+            ),
+        })
+        if passed:
+            artifacts[label] = {"n_features": len(features)}
+
+
 def _check_metric(contract: dict, checks: list[dict]) -> dict:
     labels_path = contract.get("labels_path")
     metric = contract.get("metric")
@@ -293,7 +353,13 @@ def _check_group_validation(contract: dict, state: dict, checks: list[dict]) -> 
     if not group_column:
         return
     code = "\n".join(state.get("code_history", []))
-    markers = ("GroupKFold", "StratifiedGroupKFold", "groups=", "group_ids")
+    markers = (
+        "GroupKFold",
+        "StratifiedGroupKFold",
+        "GroupShuffleSplit",
+        "groups=",
+        "group_ids",
+    )
     passed = any(marker in code for marker in markers)
     checks.append({
         "name": "group_validation",
@@ -304,6 +370,158 @@ def _check_group_validation(contract: dict, state: dict, checks: list[dict]) -> 
             else f"契约要求按 {group_column!r} 分组，但代码中未发现 GroupKFold/StratifiedGroupKFold/groups="
         ),
     })
+
+
+def _check_forbidden_features(contract: dict, state: dict, checks: list[dict]) -> None:
+    forbidden = contract.get("forbidden_features") or []
+    if not forbidden:
+        return
+
+    manifest_features = _features_from_manifest(contract)
+    if manifest_features is not None:
+        used = [feature for feature in forbidden if feature in manifest_features]
+        source = "特征清单"
+    else:
+        # 回退：只看最后一个代码块，避免早期试错污染
+        history = state.get("code_history", [])
+        code = history[-1] if history else ""
+        used = [feature for feature in forbidden if _code_uses_feature(code, feature)]
+        source = "最后一段代码"
+
+    checks.append({
+        "name": "forbidden_features",
+        "passed": not used,
+        "detail": (
+            f"未使用禁用特征（来源：{source}）"
+            if not used
+            else f"使用了禁用/泄漏特征: {used}（来源：{source}）"
+        ),
+    })
+
+
+def _features_from_manifest(contract: dict) -> set[str] | None:
+    path = contract.get("feature_manifest_path")
+    if not path:
+        return None
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        features = data.get("features")
+        if isinstance(features, list):
+            return {str(feature) for feature in features}
+    except Exception:
+        return None
+    return None
+
+
+def _code_uses_feature(code: str, feature: str) -> bool:
+    needles = (f"'{feature}'", f'"{feature}"', f"[{feature}]", f"df[{feature}]")
+    for line in code.splitlines():
+        if feature not in line:
+            continue
+        low = line.lower()
+        if any(
+            skip in low
+            for skip in (
+                "drop", "columns", "#", "print(", "unique", "describe",
+                "forbidden", "exclude", "remove", "manifest",
+            )
+        ):
+            continue
+        if any(needle in line for needle in needles):
+            return True
+    return False
+
+
+def run_skill_checks(state: dict) -> list[dict]:
+    """执行激活技能对应的检查（pre-submit 使用，不依赖 LLM）。"""
+    checks: list[dict] = []
+    contract = state.get("artifact_contract") or {}
+    active = set(state.get("active_skill_keys") or [])
+    code = "\n".join(state.get("code_history", []) or [])
+
+    if "group_cv" in active and contract.get("group_column"):
+        group_column = contract["group_column"]
+        markers = (
+            "GroupKFold",
+            "StratifiedGroupKFold",
+            "GroupShuffleSplit",
+            "groups=",
+        )
+        passed = any(marker in code for marker in markers)
+        checks.append({
+            "name": "skill:group_cv",
+            "passed": passed,
+            "detail": (
+                "检测到分组交叉验证"
+                if passed
+                else f"技能要求按 {group_column!r} 分组，但代码中未发现 GroupKFold/StratifiedGroupKFold/groups="
+            ),
+        })
+
+    if "forbidden_features" in active and contract.get("forbidden_features"):
+        manifest_features = _features_from_manifest(contract)
+        if manifest_features is not None:
+            used = [
+                feature for feature in contract["forbidden_features"]
+                if feature in manifest_features
+            ]
+            source = "特征清单"
+        else:
+            history = state.get("code_history") or []
+            last_code = history[-1] if history else ""
+            used = [
+                feature for feature in contract["forbidden_features"]
+                if _code_uses_feature(last_code, feature)
+            ]
+            source = "最后一段代码"
+        checks.append({
+            "name": "skill:forbidden_features",
+            "passed": not used,
+            "detail": (
+                f"未使用禁用特征（来源：{source}）"
+                if not used
+                else f"使用了禁用/泄漏特征: {used}（来源：{source}）"
+            ),
+        })
+
+    if "probability_not_hard_labels" in active:
+        pred_spec = next(
+            (s for s in contract.get("required_files", []) if s.get("format") == "csv"),
+            None,
+        )
+        if pred_spec is not None:
+            try:
+                pred = pd.read_csv(pred_spec["path"])
+                target = pred_spec.get("target_column") or contract.get("target_column")
+                unique = int(pred[target].dropna().nunique())
+                passed = unique > 2
+                checks.append({
+                    "name": "skill:probability_not_hard_labels",
+                    "passed": passed,
+                    "detail": (
+                        f"预测列唯一值 {unique} 个"
+                        + ("" if passed else "（看起来是 0/1 硬标签）")
+                    ),
+                })
+            except Exception as exc:
+                checks.append({
+                    "name": "skill:probability_not_hard_labels",
+                    "passed": False,
+                    "detail": f"检查失败: {type(exc).__name__}: {exc}",
+                })
+
+    return checks
+
+
+def format_skill_check_feedback(checks: list[dict]) -> str:
+    failed = [check for check in checks if not check.get("passed")]
+    if not failed:
+        return ""
+    lines = ["[技能检查未通过]"]
+    for check in failed:
+        lines.append(f"- {check['name']}: {check.get('detail', '')}")
+    lines.append("请修复后再输出最终报告。")
+    return "\n".join(lines)
 
 
 def _compute_metric(y_true: pd.Series, y_pred: pd.Series, metric: str) -> float:
@@ -358,7 +576,7 @@ pred = pd.read_csv(pred_path)
 __ROWS_ASSERT__assert list(pred.columns) == ["__ID__", target], f"列名错误: {list(pred.columns)}"
 assert pred["__ID__"].is_unique, "id 有重复"
 assert pred[target].notna().all(), "预测列有缺失"
-__RANGE_LINES__print("SELF-CHECK PASSED")
+__RANGE_LINES____MANIFEST_LINES__print("SELF-CHECK PASSED")
 '''
 
 
@@ -374,6 +592,13 @@ def build_submission_self_check_code(contract: dict | None) -> str:
         return ""
     report_spec = next(
         (s for s in contract.get("required_files", []) if s.get("format") in ("text", "md", "markdown")),
+        None,
+    )
+    manifest_spec = next(
+        (
+            s for s in contract.get("required_files", [])
+            if s.get("format") == "json" and s.get("features_key")
+        ),
         None,
     )
 
@@ -394,7 +619,18 @@ def build_submission_self_check_code(contract: dict | None) -> str:
     if report_spec is not None:
         min_chars = int(report_spec.get("min_chars", MIN_REPORT_CHARS))
         range_lines += (
-            f'assert os.path.getsize(report_path) >= {min_chars}, "报告文件不存在或太短"\n'
+            'report_text = open(report_path, encoding="utf-8").read()\n'
+            f'assert len(report_text.strip()) >= {min_chars}, "报告文件不存在或太短"\n'
+        )
+
+    manifest_lines = ""
+    if manifest_spec is not None:
+        manifest_lines = (
+            "import json\n"
+            f'manifest_path = r"{manifest_spec["path"]}"\n'
+            'manifest = json.load(open(manifest_path, encoding="utf-8"))\n'
+            'assert isinstance(manifest.get("features"), list) and manifest["features"], '
+            '"特征清单缺少非空 features 列表"\n'
         )
 
     return (
@@ -406,6 +642,7 @@ def build_submission_self_check_code(contract: dict | None) -> str:
         .replace("__ROWS__", str(rows if rows is not None else "None"))
         .replace("__ROWS_ASSERT__", rows_assert)
         .replace("__RANGE_LINES__", range_lines)
+        .replace("__MANIFEST_LINES__", manifest_lines)
     )
 
 

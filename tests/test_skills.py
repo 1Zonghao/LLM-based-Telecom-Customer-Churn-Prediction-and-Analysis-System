@@ -56,6 +56,11 @@ def test_add_from_verification_history(tmp_path):
                     "passed": True,
                     "detail": "列齐全",
                 },
+                {
+                    "name": "forbidden_features",
+                    "passed": False,
+                    "detail": "使用了禁用/泄漏特征: ['duration']",
+                },
             ],
         }
     ]
@@ -65,14 +70,16 @@ def test_add_from_verification_history(tmp_path):
 
     assert "write_deliverables" in keys
     assert "probability_not_hard_labels" in keys
-    assert len(library) == 2
+    assert "forbidden_features" in keys
+    assert len(library) == 3
 
     # 同一失败再次出现时只增加 seen_count，不重复新增
     library.add_from_verification(history, source="bank")
-    assert len(library) == 2
+    assert len(library) == 3
     by_key = {skill["key"]: skill for skill in library.skills}
     assert by_key["write_deliverables"]["seen_count"] == 2
     assert by_key["probability_not_hard_labels"]["seen_count"] == 2
+    assert by_key["forbidden_features"]["seen_count"] == 2
 
 
 def test_retrieve_ranks_relevant_skills(tmp_path):

@@ -1,4 +1,5 @@
 """交付验证器单元测试（不依赖 LLM / Jupyter kernel）。"""
+import json
 import sys
 from pathlib import Path
 
@@ -11,8 +12,10 @@ from agent.verifier import (
     build_submission_self_check,
     build_submission_self_check_code,
     format_pre_submit_feedback,
+    format_skill_check_feedback,
     format_verification_feedback,
     make_prediction_contract,
+    run_skill_checks,
     verify_artifacts,
 )
 
@@ -183,7 +186,7 @@ def test_feedback_includes_executable_self_check(tmp_path):
     assert "SELF-CHECK PASSED" in feedback
     assert "expected_rows = 5" in feedback
     assert "between(0, 1)" in feedback
-    assert "os.path.getsize(report_path)" in feedback
+    assert "len(report_text.strip())" in feedback
 
 
 def test_self_check_omits_row_assert_when_not_specified(tmp_path):
@@ -230,6 +233,126 @@ def test_pre_submit_feedback_includes_error_and_check(tmp_path):
     assert "[提交前自检未通过]" in feedback
     assert "预测文件不存在" in feedback
     assert "SELF-CHECK PASSED" in feedback
+
+
+def test_skill_group_cv_check(tmp_path):
+    contract = make_prediction_contract(
+        tmp_path,
+        tmp_path / "pred.csv",
+        target_column="Churn",
+        group_column="group_id",
+    )
+    state = {
+        "artifact_contract": contract,
+        "active_skill_keys": ["group_cv"],
+        "code_history": ["model.fit(X, y)"],
+    }
+    checks = run_skill_checks(state)
+    assert not checks[0]["passed"]
+    assert "GroupKFold" in checks[0]["detail"]
+
+    state["code_history"].append(
+        "from sklearn.model_selection import StratifiedGroupKFold"
+    )
+    checks = run_skill_checks(state)
+    assert checks[0]["passed"]
+
+
+def test_skill_forbidden_features_check(tmp_path):
+    contract = make_prediction_contract(
+        tmp_path,
+        tmp_path / "pred.csv",
+        target_column="y",
+        forbidden_features=["duration"],
+    )
+    state = {
+        "artifact_contract": contract,
+        "active_skill_keys": ["forbidden_features"],
+        "code_history": ["X = df[['age', 'duration']]"],
+    }
+    checks = run_skill_checks(state)
+    assert not checks[0]["passed"]
+
+    state["code_history"] = ["X = df.drop(columns=['duration'])"]
+    checks = run_skill_checks(state)
+    assert checks[0]["passed"]
+
+
+def test_forbidden_features_uses_manifest(tmp_path):
+    pred = tmp_path / "pred.csv"
+    pd.DataFrame({"id": [1], "y": [0.5]}).to_csv(pred, index=False)
+    manifest = tmp_path / "feature_manifest.json"
+    manifest.write_text(
+        json.dumps({"features": ["age", "call_length"]}),
+        encoding="utf-8",
+    )
+    contract = make_prediction_contract(
+        tmp_path,
+        pred,
+        target_column="y",
+        forbidden_features=["call_length"],
+        feature_manifest_path=manifest,
+    )
+    state = {
+        "artifact_contract": contract,
+        "active_skill_keys": ["forbidden_features"],
+        "code_history": [],
+    }
+    checks = run_skill_checks(state)
+    assert not checks[0]["passed"]
+    assert "特征清单" in checks[0]["detail"]
+
+    result = verify_artifacts(contract, {"final_report": "done", "code_history": []})
+    assert not result["passed"]
+    assert any(
+        check["name"] == "forbidden_features" and not check["passed"]
+        for check in result["checks"]
+    )
+
+
+def test_self_check_includes_manifest(tmp_path):
+    contract = make_prediction_contract(
+        tmp_path,
+        tmp_path / "pred.csv",
+        target_column="y",
+        feature_manifest_path=tmp_path / "feature_manifest.json",
+    )
+    raw = build_submission_self_check_code(contract)
+    assert "manifest_path" in raw
+    assert "features" in raw
+
+
+def test_skill_probability_check(tmp_path):
+    pred = tmp_path / "pred.csv"
+    pd.DataFrame({"id": [1, 2, 3], "Churn": [0, 1, 0]}).to_csv(pred, index=False)
+    contract = make_prediction_contract(
+        tmp_path,
+        pred,
+        target_column="Churn",
+        probability=True,
+    )
+    state = {
+        "artifact_contract": contract,
+        "active_skill_keys": ["probability_not_hard_labels"],
+        "code_history": [],
+    }
+    checks = run_skill_checks(state)
+    assert not checks[0]["passed"]
+
+    pd.DataFrame({"id": [1, 2, 3], "Churn": [0.1, 0.8, 0.3]}).to_csv(pred, index=False)
+    checks = run_skill_checks(state)
+    assert checks[0]["passed"]
+
+
+def test_skill_feedback_lists_only_failures(tmp_path):
+    checks = [
+        {"name": "skill:group_cv", "passed": False, "detail": "未使用分组交叉验证"},
+        {"name": "skill:forbidden_features", "passed": True, "detail": "OK"},
+    ]
+    feedback = format_skill_check_feedback(checks)
+    assert "[技能检查未通过]" in feedback
+    assert "skill:group_cv" in feedback
+    assert "skill:forbidden_features" not in feedback
 
 
 def test_no_contract_passes_for_backward_compatibility():

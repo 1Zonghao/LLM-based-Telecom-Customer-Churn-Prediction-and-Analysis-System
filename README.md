@@ -98,7 +98,7 @@ pip install -r requirements.txt
 ```env
 LLM_API_KEY=sk-your-api-key
 LLM_BASE_URL=https://api.deepseek.com
-LLM_MODEL=deepseek-v4-pro
+LLM_MODEL=deepseek-flash[1m]
 ```
 
 > **注意**：`.env` 已被 `.gitignore` 排除，不会意外提交到仓库。
@@ -207,7 +207,7 @@ python tests/test_robustness.py
 |------|------|--------|------|
 | `LLM_API_KEY` | 是 | — | DeepSeek（或其他 OpenAI 兼容服务商）API 密钥 |
 | `LLM_BASE_URL` | 否 | `https://api.deepseek.com` | API 基础地址 |
-| `LLM_MODEL` | 否 | `deepseek-v4-pro` | 模型名称 |
+| `LLM_MODEL` | 否 | `deepseek-flash[1m]` | 模型名称 |
 
 ---
 

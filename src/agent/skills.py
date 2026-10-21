@@ -80,8 +80,14 @@ _LESSON_RULES: list[dict[str, Any]] = [
     {
         "key": "group_cv",
         "match": lambda name, detail: name == "group_validation",
-        "lesson": "数据存在分组列时，必须使用 GroupKFold/StratifiedGroupKFold；随机 K-fold 会把同组样本拆到训练和验证两边，造成泄漏。",
+        "lesson": "数据存在分组列时，必须使用 GroupKFold/StratifiedGroupKFold/GroupShuffleSplit；随机 K-fold 会把同组样本拆到训练和验证两边，造成泄漏。",
         "tags": ["validation", "grouping", "leakage"],
+    },
+    {
+        "key": "forbidden_features",
+        "match": lambda name, detail: name == "forbidden_features",
+        "lesson": "不要使用业务上不可用或会造成泄漏的特征（例如通话结束后的 duration）；即使指标更好也必须丢弃。",
+        "tags": ["leakage", "features", "validation"],
     },
     {
         "key": "valid_csv",

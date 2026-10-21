@@ -100,7 +100,7 @@ Create a `.env` file in the project root:
 ```env
 LLM_API_KEY=sk-your-api-key
 LLM_BASE_URL=https://api.deepseek.com
-LLM_MODEL=deepseek-v4-pro
+LLM_MODEL=deepseek-flash[1m]
 ```
 
 > **Note**: `.env` is already excluded by `.gitignore` and will never be committed.
@@ -209,7 +209,7 @@ After analysis completes, the system automatically generates two files in the `o
 |----------|----------|---------|-------------|
 | `LLM_API_KEY` | Yes | — | DeepSeek (or other OpenAI-compatible provider) API key |
 | `LLM_BASE_URL` | No | `https://api.deepseek.com` | API base URL |
-| `LLM_MODEL` | No | `deepseek-v4-pro` | Model name |
+| `LLM_MODEL` | No | `deepseek-flash[1m]` | Model name |
 
 ---
 

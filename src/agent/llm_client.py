@@ -29,7 +29,7 @@ class LLMClient:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
     ):
-        self.model = model or os.getenv("LLM_MODEL", "deepseek-v4-pro")
+        self.model = model or os.getenv("LLM_MODEL", "deepseek-flash[1m]")
         self.api_key = api_key or os.getenv("LLM_API_KEY", "")
         self.base_url = base_url or os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
         self.max_retries = 2
@@ -99,7 +99,14 @@ class AnthropicLLMClient(LLMClient):
         base_url: str | None = None,
         max_tokens: int = 8192,
     ):
-        self.model = model or os.getenv("ANTHROPIC_MODEL", "deepseek-v4-pro[1m]")
+        # 智能体模型优先使用 AGENT_MODEL / LLM_MODEL（来自 .env），
+        # 避免被 Claude Code 自身的 ANTHROPIC_MODEL 覆盖。
+        self.model = (
+            model
+            or os.getenv("AGENT_MODEL")
+            or os.getenv("LLM_MODEL")
+            or os.getenv("ANTHROPIC_MODEL", "deepseek-flash[1m]")
+        )
         self.api_key = api_key or os.getenv("ANTHROPIC_AUTH_TOKEN", "")
         self.base_url = (base_url or os.getenv("ANTHROPIC_BASE_URL", "")).rstrip("/")
         self.max_tokens = max_tokens

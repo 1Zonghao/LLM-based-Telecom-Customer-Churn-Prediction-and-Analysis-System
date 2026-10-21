@@ -85,6 +85,51 @@ def test_verifier_forces_repair_then_passes(tmp_path):
     assert pred.exists() and report.exists()
 
 
+def test_presubmit_skill_blocks_until_group_cv(tmp_path):
+    pred = tmp_path / "pred.csv"
+    report = tmp_path / "report.md"
+    contract = make_prediction_contract(
+        tmp_path,
+        pred,
+        report,
+        target_column="Churn",
+        expected_rows=3,
+        probability=True,
+        group_column="group_id",
+    )
+
+    responses = [
+        "```python\nWRITE_ARTIFACTS\n```",
+        "分析完成，交付物已经写好。",
+        "```python\nfrom sklearn.model_selection import StratifiedGroupKFold\nWRITE_ARTIFACTS\n```",
+        "分析完成，交付物已经写好。",
+    ]
+    llm = MockLLMClient(responses)
+    app = build_agent(llm, FakeKernel(pred, report))
+    config = make_thread_config()
+    state = init_state(
+        "测试 pre-submit 技能检查",
+        "dummy.csv",
+        domain="generic",
+        artifact_contract=contract,
+        active_skill_keys=["group_cv"],
+    )
+
+    _drain(app, config, state)
+    final = app.get_state(config).values
+
+    assert final["verification_passed"] is True, final.get("verification_result")
+    assert final["pre_submit_failures"] == 1
+    assert final["verification_retries"] == 0
+    assert len(final["pre_submit_history"]) == 2
+    assert final["pre_submit_history"][0]["passed"] is False
+    assert final["pre_submit_history"][1]["passed"] is True
+    assert any(
+        check["name"] == "skill:group_cv" and not check["passed"]
+        for check in final["pre_submit_history"][0]["skill_checks"]
+    )
+
+
 def test_iteration_cap_ends_with_verification_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(nodes, "MAX_ITERATIONS", 1)
 
@@ -94,6 +139,7 @@ def test_iteration_cap_ends_with_verification_failure(tmp_path, monkeypatch):
         pred,
         target_column="Churn",
         max_verification_retries=0,
+        max_pre_submit_failures=0,
     )
     llm = MockLLMClient(["```python\nprint('x')\n```"] * 5)
     app = build_agent(llm, FakeKernel(pred))

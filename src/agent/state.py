@@ -45,12 +45,15 @@ class AgentState(TypedDict):
     max_verification_retries: int
     # 是否通过交付验证
     verification_passed: bool
-    # 提交前强制自检结果 / 历史 / 失败次数
+    # 提交前强制自检结果 / 历史 / 失败次数 / 独立预算
     pre_submit_result: dict
     pre_submit_history: Annotated[List[dict], operator.add]
     pre_submit_failures: int
+    max_pre_submit_failures: int
     # 从 skill library 检索并注入的过往经验
     skill_context: str
+    # 本次任务激活的技能 key（pre-submit 会执行对应检查）
+    active_skill_keys: list[str]
 
 
 def init_state(
@@ -59,13 +62,20 @@ def init_state(
     domain: str = "generic",
     artifact_contract: dict | None = None,
     max_verification_retries: int | None = None,
+    max_pre_submit_failures: int | None = None,
     skill_context: str = "",
+    active_skill_keys: list[str] | None = None,
 ) -> AgentState:
     contract = artifact_contract or {}
     retries = (
         max_verification_retries
         if max_verification_retries is not None
         else int(contract.get("max_verification_retries", 2))
+    )
+    pre_submit_limit = (
+        max_pre_submit_failures
+        if max_pre_submit_failures is not None
+        else int(contract.get("max_pre_submit_failures", 3))
     )
     return {
         "task": task,
@@ -92,5 +102,7 @@ def init_state(
         "pre_submit_result": {},
         "pre_submit_history": [],
         "pre_submit_failures": 0,
+        "max_pre_submit_failures": max(0, pre_submit_limit),
         "skill_context": skill_context,
+        "active_skill_keys": list(active_skill_keys or []),
     }

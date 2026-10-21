@@ -25,9 +25,11 @@ def _register_toy_dataset(monkeypatch, source: Path) -> None:
         "task": "玩具流失预测",
         "business": "测试用",
         "domain": "generic",
-        "tags": ["binary_classification", "tabular"],
+        "tags": ["binary_classification", "tabular", "grouped"],
         "min_auc": 0.5,
         "held_out": False,
+        "group_from": ["group_feature"],
+        "group_column": "group_id",
     })
 
 
@@ -37,6 +39,7 @@ def test_prepare_dataset_and_contract(tmp_path, monkeypatch):
     pd.DataFrame({
         "customerID": [f"id{i}" for i in range(rows)],
         "feature": range(rows),
+        "group_feature": [f"g{i % 4}" for i in range(rows)],
         "Churn": ["Yes" if i % 3 == 0 else "No" for i in range(rows)],
     }).to_csv(source, index=False)
     _register_toy_dataset(monkeypatch, source)
@@ -58,10 +61,13 @@ def test_prepare_dataset_and_contract(tmp_path, monkeypatch):
     test_labels = pd.read_csv(meta["test_labels_path"])
 
     assert "id" in train.columns and "Churn" in train.columns
+    assert "group_id" in train.columns
+    assert "group_id" in test_features.columns
     assert "Churn" not in test_features.columns
     assert list(test_labels.columns) == ["id", "Churn"]
     assert set(test_labels["Churn"].unique()) <= {0, 1}
     assert len(test_labels) == 10
+    assert meta["group_column"] == "group_id"
 
     # 第二次调用应直接复用缓存
     cached = er.prepare_dataset("toy", output_root=tmp_path / "gym")
@@ -71,7 +77,9 @@ def test_prepare_dataset_and_contract(tmp_path, monkeypatch):
     paths = er.build_paths("toy", tmp_path / "results")
     task = er.build_task(meta, paths)
     assert "Churn" in task
+    assert "group_id" in task
     assert str(paths["predictions"]) in task
+    assert str(paths["manifest"]) in task
     assert "SELF-CHECK PASSED" not in task
 
     task_with_skill = er.build_task(
@@ -86,3 +94,5 @@ def test_prepare_dataset_and_contract(tmp_path, monkeypatch):
     assert contract["required_files"][0]["probability"] is True
     assert contract["labels_path"] == meta["test_labels_path"]
     assert contract["metric"] == "roc_auc"
+    assert contract["group_column"] == "group_id"
+    assert contract["feature_manifest_path"] == str(paths["manifest"])

@@ -41,6 +41,22 @@ train_processed.csv
 y_test.csv
 y_train.csv
 
+# 实验智能体生成的中间产物（补充）
+/blend_results.pkl
+/cv_nocall.pkl
+/cv_results2.pkl
+/final_metrics.pkl
+/model_summary.pkl
+/test_processed.pkl
+/train_processed.pkl
+/y.pkl
+/predictions.csv
+/test_predictions.csv
+/model_report.md
+/feature_importance.csv
+/feature_importances.csv
+/catboost_info/
+
 # 本地数据集与基准缓存（可从上游重新下载，不入库）
 data/benchmarks/
 data/uci_datasets/

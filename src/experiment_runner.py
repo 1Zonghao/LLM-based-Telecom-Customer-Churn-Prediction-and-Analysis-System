@@ -75,6 +75,38 @@ DATASETS: dict[str, dict] = {
         # duration 是通话结束后才知道的，作为特征会造成泄漏
         "drop_columns": ["duration"],
     },
+    "adult_grouped_site": {
+        "source": PROJECT_ROOT / "data" / "uci_datasets" / "adult.csv",
+        "sep": ",",
+        "target": "income",
+        "id_column": None,
+        "positive": ">50K",
+        "task": "成人收入预测（现场分组数据）",
+        "business": "预测个人年收入是否超过 50K；关注 Recall 与 F1。",
+        "domain": "generic",
+        "tags": ["binary_classification", "income", "grouped", "validation", "tabular"],
+        "min_auc": 0.85,
+        "held_out": False,
+        "group_from": ["native-country", "occupation"],
+        "group_column": "site_code",
+        "hide_group_hint": True,
+    },
+    "bank_blind": {
+        "source": PROJECT_ROOT / "data" / "uci_datasets" / "bank-additional" / "bank-additional-full.csv",
+        "sep": ";",
+        "target": "y",
+        "id_column": None,
+        "positive": "yes",
+        "task": "银行营销响应预测（盲测版）",
+        "business": "正类比例低，漏报潜在响应客户的代价高，优先 Recall，同时兼顾 F1 与 AUC。",
+        "domain": "generic",
+        "tags": ["binary_classification", "marketing", "imbalanced", "leakage", "tabular"],
+        "min_auc": 0.75,
+        "held_out": False,
+        # 把 duration 改名为 call_length，避免模型凭常识直接识别；契约会禁止使用它
+        "rename_columns": {"duration": "call_length"},
+        "forbidden_features": ["call_length"],
+    },
     "adult": {
         "source": PROJECT_ROOT / "data" / "uci_datasets" / "adult.csv",
         "sep": ",",
@@ -87,6 +119,37 @@ DATASETS: dict[str, dict] = {
         "tags": ["binary_classification", "income", "imbalanced", "tabular"],
         "min_auc": 0.85,
         "held_out": False,
+    },
+    "adult_grouped": {
+        "source": PROJECT_ROOT / "data" / "uci_datasets" / "adult.csv",
+        "sep": ",",
+        "target": "income",
+        "id_column": None,
+        "positive": ">50K",
+        "task": "成人收入预测（分组数据）",
+        "business": "数据按国家+职业分组；同一组样本相关，验证时必须按组切分，避免同组样本同时出现在训练和验证中。",
+        "domain": "generic",
+        "tags": ["binary_classification", "income", "grouped", "validation", "tabular"],
+        "min_auc": 0.85,
+        "held_out": False,
+        "group_from": ["native-country", "occupation"],
+        "group_column": "group_id",
+    },
+    "adult_grouped_blind": {
+        "source": PROJECT_ROOT / "data" / "uci_datasets" / "adult.csv",
+        "sep": ",",
+        "target": "income",
+        "id_column": None,
+        "positive": ">50K",
+        "task": "成人收入预测（分组数据，盲测版）",
+        "business": "预测个人年收入是否超过 50K；关注 Recall 与 F1。",
+        "domain": "generic",
+        "tags": ["binary_classification", "income", "grouped", "validation", "tabular"],
+        "min_auc": 0.85,
+        "held_out": False,
+        "group_from": ["native-country", "occupation"],
+        "group_column": "group_id",
+        "hide_group_hint": True,
     },
     "diabetes": {
         "source": PROJECT_ROOT / "data" / "uci_datasets" / "diabetes.csv",
@@ -147,10 +210,20 @@ def prepare_dataset(
             df = df.drop(columns=[column])
             dropped_columns.append(column)
 
+    for old_name, new_name in (spec.get("rename_columns") or {}).items():
+        if old_name in df.columns:
+            df = df.rename(columns={old_name: new_name})
+
     if spec.get("id_column") and spec["id_column"] in df.columns:
         df = df.rename(columns={spec["id_column"]: "id"})
     else:
         df.insert(0, "id", range(len(df)))
+
+    if spec.get("group_from"):
+        group_column = spec.get("group_column", "group_id")
+        group_cols = spec["group_from"]
+        df[group_column] = df[group_cols].astype(str).agg("|".join, axis=1)
+        df[group_column] = df[group_column].factorize()[0]
 
     target = spec["target"]
     if target not in df.columns:
@@ -198,6 +271,11 @@ def prepare_dataset(
         "n_test": int(len(test_df)),
         "positive_rate": round(float(train_df[target].mean()), 4),
         "dropped_columns": dropped_columns,
+        "renamed_columns": spec.get("rename_columns", {}),
+        "group_column": spec.get("group_column"),
+        "group_from": spec.get("group_from", []),
+        "hide_group_hint": spec.get("hide_group_hint", False),
+        "forbidden_features": spec.get("forbidden_features", []),
         "seed": seed,
         "holdout_size": holdout_size,
     }
@@ -216,6 +294,7 @@ def build_paths(name: str, result_dir: Path) -> dict:
         "run_dir": run_dir,
         "predictions": run_dir / "predictions.csv",
         "report": run_dir / "report.md",
+        "manifest": run_dir / "feature_manifest.json",
     }
 
 
@@ -236,7 +315,8 @@ assert list(pred.columns) == ["id", target], f"列名错误: {list(pred.columns)
 assert pred["id"].is_unique, "id 有重复"
 assert pred[target].notna().all(), "预测列有缺失"
 assert pred[target].between(0, 1).all(), "预测值不是概率"
-assert os.path.getsize(report_path) > 200, "报告文件不存在或太短"
+report_text = open(report_path, encoding="utf-8").read()
+assert len(report_text.strip()) > 200, "报告文件不存在或太短"
 print("SELF-CHECK PASSED")
 ```'''
 
@@ -253,6 +333,13 @@ def build_self_check_snippet(meta: dict, paths: dict) -> str:
 
 def build_task(meta: dict, paths: dict, skill_keys: set[str] | None = None) -> str:
     target = meta["target"]
+    group_line = ""
+    if meta.get("group_column") and not meta.get("hide_group_hint"):
+        group_column = meta["group_column"]
+        group_line = (
+            f"- 数据包含分组列 {group_column}；同一 group 的样本相关，"
+            f"{group_column} 不能作为特征。\n"
+        )
     task = f"""\
 这是一个离线数据科学评测任务：{meta['task']}。
 
@@ -260,11 +347,11 @@ def build_task(meta: dict, paths: dict, skill_keys: set[str] | None = None) -> s
 - 待预测集（无标签）：{meta['test_features_path']}
 - 目标列：{target}（0/1；1 表示正类）
 - 评估指标：ROC-AUC（首要），同时报告 F1、Recall 和混淆矩阵。
-- 交付物：把待预测集每一行的概率写入 {paths['predictions']}（CSV，列 id 和 {target}），并把最终报告写入 {paths['report']}（Markdown）。
+- 交付物：把待预测集每一行的概率写入 {paths['predictions']}（CSV，列 id 和 {target}），把最终报告写入 {paths['report']}（Markdown），并写出 {paths['manifest']}（JSON，包含 "features" 列表，列出最终模型实际使用的全部特征名）。
 - 数据规模：训练 {meta['n_train']} 行，待预测 {meta['n_test']} 行，正类比例约 {meta['positive_rate']:.2%}。
 - 业务约束：{meta['business']}
 - id 列只用于对齐，不要作为特征。
-- 在输出最终报告之前，必须用代码实际生成上述两个文件并打印确认。
+{group_line}- 在输出最终报告之前，必须用代码实际生成上述两个文件并打印确认。
 """
     # 只有检索到相关经验时才注入可执行自检；off 组保持原任务不变
     if skill_keys and skill_keys & {"write_deliverables", "probability_not_hard_labels"}:
@@ -289,6 +376,9 @@ def build_contract(meta: dict, paths: dict) -> dict:
         labels_path=meta["test_labels_path"],
         metric="roc_auc",
         min_metric=meta["min_auc"],
+        group_column=meta.get("group_column"),
+        forbidden_features=meta.get("forbidden_features", []),
+        feature_manifest_path=paths["manifest"],
         max_verification_retries=2,
     )
 
@@ -379,6 +469,7 @@ def run_experiment(args: argparse.Namespace) -> None:
                     artifact_contract=contract,
                     max_iter=args.max_iter,
                     skill_context=skill_context,
+                    active_skill_keys=[s["key"] for s in injected],
                     kernel_factory=None,
                 )
             except Exception as exc:
