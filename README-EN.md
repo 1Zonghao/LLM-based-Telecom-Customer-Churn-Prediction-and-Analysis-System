@@ -1,6 +1,8 @@
-# Autonomous Data Science Agent
+# Autonomous Data Science Agent v2.0
 
 A lightweight LLM-powered autonomous data science system tailored for telecom customer churn prediction. Built on the Dual-Track ReAct architecture, it combines LangGraph state machines with a stateful Jupyter Kernel sandbox to autonomously perform data exploration, feature engineering, model training, and business insight generation — while pausing at critical checkpoints for Human-in-the-Loop confirmation.
+
+v2.0 delivers a comprehensive frontend overhaul: session persistence with a history sidebar, hierarchical message rendering (code/error/report visual distinction), and a custom academic-style theme.
 
 ![Project Homepage](home.png)
 
@@ -28,6 +30,9 @@ A lightweight LLM-powered autonomous data science system tailored for telecom cu
 - **Observation Compression Middleware**: DataFrame outputs are auto-summarized to shape/dtypes; tracebacks are truncated to key lines, preventing LLM context-window overflow.
 - **Streaming Gradio Frontend**: Real-time conversation history, execution status, progress panel (phase / iteration / key metrics), and checkpoint confirmation panel.
 - **Auto-Export Code History**: Upon completion, the system automatically generates a `.py` execution script and a `.ipynb` Notebook for reproducibility.
+- **Session Persistence & Sidebar** (v2.0): JSON-file-backed conversation history with a sidebar listing all past sessions — one-click load, delete, auto-prune to 50 sessions.
+- **Hierarchical Message Rendering** (v2.0): System messages, execution errors, code results, and final reports are visually differentiated with distinct background colors, borders, and fonts; code blocks use a dark theme.
+- **Batch Testing Support** (v2.0): `batch_test.py` enables running the autonomous analysis pipeline across multiple UCI datasets.
 
 ---
 
@@ -107,8 +112,12 @@ python src/main.py
 ```
 
 The browser will automatically open `http://localhost:7860`, featuring:
-- **Left panel**: Dataset upload, task description, start/stop buttons, real-time progress
-- **Right panel**: Streaming chat history and checkpoint confirmation panel (with user-feedback textbox)
+- **Left sidebar**: Session history list (click to hot-reload), new chat, delete session
+- **Top status bar**: HTML status card reflecting the engine's current phase in real time
+- **Checkpoint panel**: Positioned above the Chatbot, shown when a checkpoint triggers — displays the proposal and a user-feedback textbox
+- **Main Chatbot**: Streaming conversation history with hierarchical message rendering by type
+- **Bottom input area**: Dataset upload, task description, start/stop buttons
+- **Progress panel**: Phase name, iteration count, progress bar, key metrics cards
 
 ### 5. Run tests
 
@@ -136,13 +145,16 @@ python tests/test_robustness.py
 ├── .env                      # Environment variables (local only)
 ├── .gitignore
 ├── data/
-│   └── WA_Fn-UseC_-Telco-Customer-Churn.csv   # Sample dataset
+│   ├── WA_Fn-UseC_-Telco-Customer-Churn.csv   # Sample dataset
+│   ├── images/               # Sandbox-generated charts (runtime)
+│   └── sessions/             # Session persistence JSON files
 ├── docker/
 │   └── Dockerfile            # Headless Jupyter sandbox image
 ├── outputs/                  # Auto-exported code history (.py / .ipynb)
 ├── src/
 │   ├── main.py               # Gradio frontend entry point
 │   ├── main_agent.py         # Phase 2 integration tests
+│   ├── batch_test.py         # v2.0 multi-dataset batch runner
 │   ├── agent/
 │   │   ├── state.py          # AgentState dual-track definition
 │   │   ├── graph.py          # LangGraph compilation & streaming
@@ -153,7 +165,11 @@ python tests/test_robustness.py
 │   │   ├── kernel_manager.py # Jupyter Kernel stateful manager
 │   │   └── compressor.py     # Execution-result compression middleware
 │   └── ui/
-│       └── app.py            # Gradio UI & checkpoint interaction logic
+│       ├── app.py            # Gradio UI layout & streaming event handlers
+│       ├── session_store.py  # v2.0 session persistence CRUD
+│       ├── message_formatter.py  # v2.0 message type detection & formatting
+│       └── static/
+│           └── style.css     # v2.0 custom theme stylesheet
 └── tests/
     ├── test_sandbox.py       # Phase 1 sandbox smoke tests
     └── test_robustness.py    # Phase 4 boundary & self-repair tests

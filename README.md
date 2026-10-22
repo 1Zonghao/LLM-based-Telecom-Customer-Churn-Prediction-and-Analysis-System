@@ -1,6 +1,8 @@
-# 自主数据科学智能体
+# 自主数据科学智能体 v2.0
 
 基于大语言模型（LLM）的微型自主数据科学系统，专为电信客户流失预测场景设计。系统采用 Dual-Track ReAct 架构，结合 LangGraph 状态图与有状态 Jupyter Kernel 沙箱，能够自主完成数据探索、特征工程、模型训练及业务洞察生成，并在关键节点通过 Human-in-the-Loop 断点机制让用户确认方案。
+
+v2.0 在前端交互层面进行了全面重构：新增会话持久化与历史侧边栏、消息类型层次化渲染（代码/报错/报告视觉区分）、自定义学术风格主题。
 
 ![项目主页](home.png)
 
@@ -28,6 +30,9 @@
 - **Observation 压缩中间件**：DataFrame 输出自动摘要为 shape/dtypes，Traceback 自动截取关键行，防止 LLM 上下文窗口溢出。
 - **流式 Gradio 前端**：实时展示对话历史、执行状态、进度面板（阶段/迭代/关键指标）与断点确认面板。
 - **自动导出代码历史**：分析完成后自动生成 `.py` 执行脚本与 `.ipynb` Notebook，便于复盘与复现。
+- **会话持久化与侧边栏**（v2.0）：JSON 文件存储对话历史，侧边栏展示所有历史会话，支持一键加载、删除，最多保留 50 条。
+- **消息层次化渲染**（v2.0）：系统消息、执行错误、代码结果、最终报告等自动以不同底色/边框/字体视觉区分，代码块暗色主题高亮。
+- **批次批测支持**（v2.0）：`batch_test.py` 支持在多个 UCI 数据集上批量运行自主分析流水线。
 
 ---
 
@@ -105,8 +110,12 @@ python src/main.py
 ```
 
 启动后浏览器自动打开 `http://localhost:7860`，界面包含：
-- **左侧面板**：数据集上传、任务描述、开始/停止按钮、实时进度观测
-- **右侧主区域**：流式对话历史、断点确认面板（含用户反馈输入框）
+- **左侧侧边栏**：历史会话列表（点击热加载）、新建对话、删除会话
+- **顶置状态栏**：HTML 状态卡片，实时反映引擎运行阶段
+- **断点确认面板**：位于 Chatbot 上方，触发时显示方案提案与反馈输入框
+- **主 Chatbot**：流式对话历史，消息按类型层次化渲染
+- **底部输入区**：数据集上传、任务描述、激活管道 / 强行熔断按钮
+- **进度面板**：阶段名、迭代轮次、进度条、关键指标卡片
 
 ### 5. 运行测试
 
@@ -134,13 +143,16 @@ python tests/test_robustness.py
 ├── .env                      # 环境变量（本地配置，勿提交）
 ├── .gitignore
 ├── data/
-│   └── WA_Fn-UseC_-Telco-Customer-Churn.csv   # 示例数据集
+│   ├── WA_Fn-UseC_-Telco-Customer-Churn.csv   # 示例数据集
+│   ├── images/               # 沙箱生成的图表（运行时）
+│   └── sessions/             # 会话持久化 JSON 文件
 ├── docker/
 │   └── Dockerfile            # 无头 Jupyter 沙箱镜像
 ├── outputs/                  # 自动导出的代码历史（.py / .ipynb）
 ├── src/
 │   ├── main.py               # Gradio 前端入口
 │   ├── main_agent.py         # Phase 2 集成测试
+│   ├── batch_test.py         # v2.0 多数据集批次批测
 │   ├── agent/
 │   │   ├── state.py          # AgentState 双轨状态定义
 │   │   ├── graph.py          # LangGraph 编译与流式封装
@@ -151,7 +163,11 @@ python tests/test_robustness.py
 │   │   ├── kernel_manager.py # Jupyter Kernel 有状态管理
 │   │   └── compressor.py     # 执行结果压缩中间件
 │   └── ui/
-│       └── app.py            # Gradio UI 与断点交互逻辑
+│       ├── app.py            # Gradio UI 布局与流式事件处理
+│       ├── session_store.py  # v2.0 会话持久化 CRUD
+│       ├── message_formatter.py  # v2.0 消息类型检测与格式化
+│       └── static/
+│           └── style.css     # v2.0 自定义主题样式
 └── tests/
     ├── test_sandbox.py       # Phase 1 沙箱冒烟测试
     └── test_robustness.py    # Phase 4 边界与自修复测试

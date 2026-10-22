@@ -27,6 +27,10 @@ class AgentState(TypedDict):
     user_feedback: str
     # 连续相同错误计数（用于检测死循环）
     consecutive_errors: int
+    # Token 消耗累计
+    token_usage: dict
+    # 分析开始的 ISO 时间戳
+    started_at: str
 
 
 def init_state(task: str, data_path: str) -> AgentState:
@@ -43,4 +47,6 @@ def init_state(task: str, data_path: str) -> AgentState:
         "pending_proposal": "",
         "user_feedback": "",
         "consecutive_errors": 0,
+        "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "started_at": "",
     }
